@@ -1,11 +1,21 @@
-// Adds "Change Metadata..." to the game context menu, right before "Properties..."
+// Adds "Change Metadata..." to the game context menu, right before "Properties...".
+//
+// The way Steam's internal LibraryContextMenu is resolved and patched (outer
+// render -> menu type -> menu body render/shouldComponentUpdate, and the appid
+// resolution) is ported from Decky Metadata v0.6.4 (src/contextMenuPatch.tsx),
+// itself derived from decky-steamgriddb by the SteamGridDB project:
+//   https://github.com/beallio/Decky-Metadata
+//   https://github.com/SteamGridDB/decky-steamgriddb
+// Licensed under the GNU General Public License v3.0 (or later). See NOTICE.
 import {FC} from "react";
 import {useTranslations} from "./useTranslations";
 import {
 	afterPatch,
+	Export,
 	fakeRenderComponent,
 	findInReactTree,
-	findModuleChild,
+	findInTree,
+	findModuleByExport,
 	MenuItem,
 	Navigation,
 	Patch
@@ -32,57 +42,81 @@ const MetaDeckChangeMetadata: FC<{ appId: number }> = ({appId}) =>
 	</MenuItem>
 }
 
-// Always add before "Properties..."
-const spliceChangeMetadata = (children: any[], appid: number, shouldShow: (appId: number) => boolean) => {
-	// Re-renders must not stack copies
-	const existingIdx = children.findIndex((x: any) => x?.key === ENTRY_KEY);
-	if (existingIdx != -1)
-		children.splice(existingIdx, 1);
-
-	if (!shouldShow(appid))
-		return;
-
-	const propertiesMenuItemIdx = children.findIndex((item) =>
-		findInReactTree(
-			item,
-			(x) => x?.onSelected && x.onSelected.toString().includes('AppProperties')
-		)
-	)
-	children.splice(
-		propertiesMenuItemIdx >= 0 ? propertiesMenuItemIdx : children.length,
-		0,
-		<MetaDeckChangeMetadata key={ENTRY_KEY}
-			appId={appid}
-		/>
-	)
-}
-
 /**
- * Game context menu component, looked up when mounting so a Steam change
- * can't prevent the whole plugin from loading.
+ * Steam's internal LibraryContextMenu class. It isn't exported: find the module
+ * referencing it, take the member whose source mentions "navigator:" and read
+ * the type back from a throwaway render. Looked up when mounting, so a Steam
+ * change can't prevent the whole plugin from loading.
  */
 function findLibraryContextMenu(): any {
 	try{
-		return fakeRenderComponent(
-			findModuleChild((m) => {
-				if (typeof m !== 'object') return
-				for (const prop in m) {
-					if (m[prop]?.toString()?.includes('().LibraryContextMenu')) {
-						return Object.values(m).find(
-							(sibling) =>
-								sibling?.toString().includes('createElement') &&
-								sibling?.toString().includes('navigator:')
-						);
-					}
-				}
-				return
-			})
-		)?.type;
+		const owningModule = findModuleByExport((member: Export) =>
+			typeof member?.toString === "function" &&
+			member.toString().includes("().LibraryContextMenu"));
+		if (!owningModule)
+			return undefined;
+
+		const menuComponent = Object.values(owningModule).find((member: any) =>
+			typeof member?.toString === "function" &&
+			member.toString().includes("navigator:")) as FC | undefined;
+		return menuComponent ? fakeRenderComponent(menuComponent)?.type : undefined;
 	}
 	catch (e: any){
-		logger.error("Library context menu not found", e);
+		logger.error("Library context menu lookup failed", e);
 		return undefined;
 	}
+}
+
+/**
+ * Which app the menu is really for: Steam reuses context menu instances, so the
+ * appid passed in can be stale. Prefer a fresher appid on the owning React node,
+ * otherwise look for an `app.appid` in the tree (newer Steam clients).
+ */
+function resolveAppId(nodes: any[], fallbackAppId: number): number {
+	const fresherNode = (nodes || []).find((node: any) =>
+		node?._owner?.pendingProps?.overview?.appid &&
+		node._owner.pendingProps.overview.appid !== fallbackAppId);
+	if (fresherNode)
+		return Number(fresherNode._owner.pendingProps.overview.appid);
+
+	const taggedNode = findInTree(nodes, (node) => node?.app?.appid, { walkable: ["props", "children"] });
+	return Number(taggedNode?.app?.appid ?? fallbackAppId);
+}
+
+/** Only the per-game menu has a launch action referencing "launchSource" (not e.g. the screenshot menu) */
+function isGameContextMenu(items: any[]): boolean {
+	return Array.isArray(items) && items.length > 0 &&
+		!!findInReactTree(items, (node) => node?.props?.onSelected?.toString?.().includes("launchSource"));
+}
+
+function hasAppProperties(items: any[]): boolean {
+	return Array.isArray(items) && items.length > 0 &&
+		!!findInReactTree(items, (node) => node?.onSelected?.toString?.().includes("AppProperties"));
+}
+
+/** Re-renders must not stack copies */
+function removeEntry(items: any[]): void {
+	if (!Array.isArray(items))
+		return;
+	for (let index = items.length - 1; index >= 0; index--){
+		if (items[index]?.key === ENTRY_KEY)
+			items.splice(index, 1);
+	}
+}
+
+function syncEntry(items: any[], ownerAppId: number, fallbackAppId: number, shouldShow: (appId: number) => boolean): void {
+	removeEntry(items);
+	if (!isGameContextMenu(items))
+		return;
+
+	const appId = ownerAppId > 0 ? ownerAppId : (fallbackAppId > 0 && hasAppProperties(items) ? fallbackAppId : 0);
+	if (appId <= 0 || !shouldShow(appId))
+		return;
+
+	const propertiesIndex = items.findIndex((node) =>
+		findInReactTree(node, (x) => x?.onSelected?.toString?.().includes("AppProperties")));
+	items.splice(propertiesIndex >= 0 ? propertiesIndex : items.length, 0,
+		<MetaDeckChangeMetadata key={ENTRY_KEY} appId={appId}/>);
 }
 
 /**
@@ -91,10 +125,17 @@ function findLibraryContextMenu(): any {
  * @returns A mount that adds the entry, and removes it when dismounted.
  */
 const contextMenuPatch = (shouldShow: (appId: number) => boolean): AsyncMountable => {
-	const patches: {
-		outer?: Patch
-		inner?: Patch
-	} = {}
+	let outerPatch: Patch | undefined;
+	let innerPatch: Patch | undefined;
+	// Menu body prototype patches outlive the menu instance
+	const bodyPatches: Patch[] = [];
+	const patchedBodies = new Set<object>();
+
+	// Steam reuses one menu instance and the body patches are installed once: they must read
+	// the appid of the game currently opening the menu, refreshed by the outer render
+	let currentOwnerAppId = 0;
+	let currentFallbackAppId = 0;
+
 	return {
 		async mount(): Promise<void>
 		{
@@ -104,58 +145,65 @@ const contextMenuPatch = (shouldShow: (appId: number) => boolean): AsyncMountabl
 				return;
 			}
 
-			patches.outer = afterPatch(
-				   LibraryContextMenu.prototype,
-				   'render',
-				   (_: Record<string, unknown>[], component: any) => {
-					   const appid: number = component._owner.pendingProps.overview.appid
+			outerPatch = afterPatch(LibraryContextMenu.prototype, "render", (_: any[], menu: any) => {
+				currentOwnerAppId = Number(menu?._owner?.pendingProps?.overview?.appid ?? 0);
+				currentFallbackAppId = resolveAppId(menu?.props?.children ?? [], 0);
 
-					   if (!patches.inner) {
-						   patches.inner = afterPatch(
-								 component.type.prototype,
-								 'shouldComponentUpdate',
-								 ([nextProps]: any, shouldUpdate: any) => {
-									 if (Array.isArray(nextProps.children))
-									 {
-										 const gtmIdx = nextProps.children.findIndex((x: any) => x?.key === ENTRY_KEY);
-										 if (gtmIdx != -1) nextProps.children.splice(gtmIdx, 1)
+				if (!innerPatch){
+					innerPatch = afterPatch(menu, "type", (_typeArgs: any[], rendered: any) => {
+						const bodyPrototype = rendered?.type?.prototype;
+						if (!bodyPrototype || patchedBodies.has(bodyPrototype))
+							return rendered;
+						patchedBodies.add(bodyPrototype);
 
-										 if (shouldUpdate === true)
-										 {
-											 let updatedAppid: number = appid
-											 // find the first menu component that has the correct appid assigned to _owner
-											 const parentOverview = nextProps.children.find(
-												    (x: any) =>
-														  x?._owner?.pendingProps?.overview?.appid &&
-														  x._owner.pendingProps.overview.appid !== appid
-											 )
-											 // if found then use that appid
-											 if (parentOverview)
-											 {
-												 updatedAppid = parentOverview._owner.pendingProps.overview.appid
-											 }
-											 spliceChangeMetadata(nextProps.children, updatedAppid, shouldShow)
-										 }
-									 }
+						// First render of the menu body
+						bodyPatches.push(afterPatch(bodyPrototype, "render", (_args: any[], output: any) => {
+							try{
+								syncEntry(output?.props?.children?.[0], currentOwnerAppId, currentFallbackAppId, shouldShow);
+							}
+							catch{
+								// Steam reshapes this tree often, skip on mismatch
+							}
+							return output;
+						}));
 
-									 return shouldUpdate
-								 }
-						   )
-					   }
-					   else {
-						   spliceChangeMetadata(component.props.children, appid, shouldShow)
-					   }
+						// Later updates, when Steam refreshes the app overview
+						bodyPatches.push(afterPatch(bodyPrototype, "shouldComponentUpdate", ([nextProps]: any[], shouldUpdate: boolean) => {
+							try{
+								if (shouldUpdate === true)
+									syncEntry(nextProps.children, currentOwnerAppId, currentFallbackAppId, shouldShow);
+								else
+									removeEntry(nextProps.children);
+							}
+							catch{
+								// Not our menu, leave the decision untouched
+							}
+							return shouldUpdate;
+						}));
 
-					   return component
-				   }
-			)
+						return rendered;
+					});
+				}
+				else if (Array.isArray(menu?.props?.children)){
+					try{
+						syncEntry(menu.props.children, currentOwnerAppId, currentFallbackAppId, shouldShow);
+					}
+					catch{
+						// Ignore non-matching menus
+					}
+				}
+
+				return menu;
+			});
 		},
 		async dismount(): Promise<void>
 		{
-			patches.outer?.unpatch()
-			patches.inner?.unpatch()
-			patches.outer = undefined
-			patches.inner = undefined
+			bodyPatches.splice(0).reverse().forEach((patch) => patch.unpatch());
+			patchedBodies.clear();
+			outerPatch?.unpatch();
+			innerPatch?.unpatch();
+			outerPatch = undefined;
+			innerPatch = undefined;
 		}
 	}
 }
