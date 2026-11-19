@@ -45,6 +45,14 @@ import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleD
 import type { ProviderIdentifier } from "../Provider";
 import { DBoxMetadataProvider, type DBoxMetadataProviderCache, type DBoxMetadataProviderConfig } from "./providers/DBoxMetadataProvider";
 
+/** Whether the library page of this app is shown: /library/app/:appid, /library/details/:appid, /library/:collection/app/:appid */
+function isGameDetailRouteOf(appId: number): boolean{
+	// @ts-ignore
+	const path: string | undefined = Router?.WindowStore?.GamepadUIMainWindowInstance?.m_history?.location?.pathname;
+	const match = path?.match(/^\/library(?:\/[^/]+)?\/(?:app|details)\/(\d+)(?:\/|$)/);
+	return !!match && Number(match[1]) === appId;
+}
+
 // Fields that can be edited by hand on the "Change Metadata" page
 export type MetadataManualOverride = Partial<Pick<MetadataData,
 	"description" | "developers" | "publishers" | "release_date" | "rating" | "store_categories">>;
@@ -415,6 +423,17 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 							// @ts-ignore
 							if (Router?.WindowStore?.GamepadUIMainWindowInstance?.m_history?.location?.pathname === '/library/home'){
+								if(!module.excludedApps.includes(overview.appid))
+									return false;
+								else
+									return ret;
+							}
+
+							// On this game's own page always look like a Steam game, even within a truth window opened
+							// by another caller (GetPerClientData, BHasRecentlyLaunched): coming back to the page (e.g. from
+							// Change Metadata) otherwise made Game Info fall back to "non-Steam game or mod".
+							// Inside GetGameID/GetPrimaryAppID (-1) the real answer is still given: launching needs it.
+							if (module.bypassCounter !== -1 && isGameDetailRouteOf(overview.appid)){
 								if(!module.excludedApps.includes(overview.appid))
 									return false;
 								else
