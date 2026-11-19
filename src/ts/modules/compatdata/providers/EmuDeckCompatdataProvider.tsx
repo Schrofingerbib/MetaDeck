@@ -11,7 +11,7 @@ import { FuzzySearchCompatdataProvider, type FuzzySearchCompatdataProviderCache,
 import Logger from "../../../logger";
 import { FaGamepad } from "react-icons/fa";
 import { distance } from "fastest-levenshtein";
-import { rankTitles } from "../../../titleSearch";
+import { rankTitles, sameTitle } from "../../../titleSearch";
 
 // RetroDECK / ES-DE system folders -> EmuDeck list consoles
 const SYSTEM_CONSOLES: Record<string, string[]> = {
@@ -47,6 +47,20 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 	title = t("providerCompatdataEmuDeck");
 
 	logger = new Logger(this.identifier);
+
+	/**
+	 * Apps whose automatic match must be the game's own title: the list comes before the emulators' lists
+	 * (Steam Deck reports rather than PC ratings), but these match by exact IDs, so a merely close title
+	 * ("Silent Hill 3" for "Silent Hill 2") waits until they have answered. See CompatdataModule.
+	 */
+	readonly sameTitleOnly = new Set<number>();
+
+	protected override async acceptAutomaticMatch(appId: number, game: CompatdataData): Promise<boolean>{
+		if (!this.sameTitleOnly.has(appId))
+			return true;
+		const details = await getAppDetails(appId);
+		return !!details && sameTitle(details.strDisplayName, game.title);
+	}
 
 	// Every Steam Deck report (several per game: consoles, emulators, users) and the titles to search
 	private verifiedRows: VerifiedDBResults[] = [];

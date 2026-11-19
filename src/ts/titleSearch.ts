@@ -153,6 +153,13 @@ function matchTitle(query: string[], title: string[], titleAbbreviations: Set<st
 	return [tier, phrase ? 0 : 1, titleUsed.filter((used) => !used).length];
 }
 
+/** Same title once punctuation, case, accents, small words and Roman numerals are ignored */
+export function sameTitle(a: string, b: string): boolean{
+	const words = (text: string) => titleWords(text).filter((word) => !OPTIONAL_WORDS.has(word));
+	const [x, y] = [words(a), words(b)];
+	return x.length > 0 && x.length === y.length && x.every((word, i) => word === y[i]);
+}
+
 /** The query and its abbreviation expansions, as word lists */
 function queryVariants(query: string): string[][]{
 	const words = titleWords(query);

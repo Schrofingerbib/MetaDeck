@@ -14,6 +14,8 @@ type PCSX2CompatData = {
 	serial: string;
 	region: "us" | "eu" | "ja";
 	status: "Perfect" | "Playable" | "Ingame" | "Menus" | "Intros" | "Nothing";
+	last_tested_version?: string;
+	last_tested_date?: string;
 };
 
 export interface PCSX2CompatdataProviderConfig extends ProviderConfig<"pcsx2">{
@@ -177,6 +179,17 @@ export class PCSX2CompatdataProvider extends CompatdataProvider<"pcsx2">{
 				}
 			);
 		});
+
+		// The list rates PCSX2 on PC: say so, with the version and year of the test
+		const rated = compatData.find(c => c.serial.replace('-', '') === titleIds![0]) ?? compatData[0];
+		// "Playable (tested with PCSX2 1.3.1 in 2015)"
+		const tested = [
+			rated.last_tested_version ? `with PCSX2 ${rated.last_tested_version}` : undefined,
+			rated.last_tested_date ? `in ${rated.last_tested_date.slice(0, 4)}` : undefined
+		].filter(part => part).join(" ");
+		const note = `PCSX2 compatibility list (PC, not Steam Deck): ${rated.status}` + (tested ? ` (tested ${tested})` : "");
+		[result.deck_test_results!, result.machine_test_results!, result.os_test_results!, result.frame_test_results!]
+			.forEach(results => results.unshift({ test_loc_token: note, test_result: SteamTestResult.Notes }));
 
 		// Default configuration works fine for playable games (we cannot assume for the Frame here)
 		if(result.deck_compat_category === SteamDeckCompatCategory.VERIFIED){

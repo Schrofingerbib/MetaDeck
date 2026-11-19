@@ -77,6 +77,11 @@ export abstract class FuzzySearchCompatdataProvider<Identifier extends "dolphin"
 		await this.onOverridesChange(oldValue, newValue);
 	}
 
+	/** Whether the closest entry found by name may be used (pinned entries always are) */
+	protected acceptAutomaticMatch(_appId: number, _game: CompatdataData): Promise<boolean>{
+		return Promise.resolve(true);
+	}
+
 	/** The entry with this ID, for pinned IDs a search by the app name does not return */
 	public getEntryById(_id: ID): CompatdataData | undefined{
 		return undefined;
@@ -130,6 +135,10 @@ export abstract class FuzzySearchCompatdataProvider<Identifier extends "dolphin"
 		}
 
 		const game = games[0];
+		if (game && data_id === undefined && !await this.acceptAutomaticMatch(appId, game)){
+			this.logger.debug("Automatic match not accepted", appId, game.title);
+			return undefined;
+		}
 		if (game)
 			await this.enrichCompatdataForGame(appId, game);
 		this.logger.debug("Final result", appId, game);
