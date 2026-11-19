@@ -179,8 +179,9 @@ export class AchievementsModule extends Module<"achievements", AchievementsProvi
 			notify(event: CacheEvent): void;
 		};
 		invalidateQueries(params: {
-			queryKey: any[];
+			queryKey?: any[];
 			exact?: boolean;
+			predicate?: (query: { queryKey: any[] }) => boolean;
 		}): any;
 	}
 
@@ -908,6 +909,24 @@ export class AchievementsModule extends Module<"achievements", AchievementsProvi
 					// Not set if mount failed or never ran
 					cacheFixSubscription?.();
 				}
+			});
+
+			// Steam can query achievements of shortcuts before the patches above are mounted
+			// (Home prefetches recent games, and mounting can be slow, e.g. when a provider is rate limited).
+			// Steam's own (empty) answer then stays cached for the whole session, hiding achievements
+			// and the mini achievements row: invalidate those queries so they're refetched through MetaDeck.
+			mounts.addMount({
+				mount(){
+					const isShortcut = (appId: unknown) =>
+						typeof appId === "number" &&
+						appStore.GetAppOverviewByAppID(appId)?.app_type === SteamAppTypeShortcut &&
+						!module.excludedApps.includes(appId);
+
+					void module.queryCache?.invalidateQueries({
+						predicate: (query) => query.queryKey?.[0] === "achievements" && isShortcut(query.queryKey?.[1])
+					});
+				},
+				dismount(){}
 			});
 
 			// Prevent retrieving info about shortcuts, since their appid might break serialization
