@@ -17,7 +17,7 @@ import { useMetaDeckState } from "../../MetaDeckState";
 import { t } from "../../useTranslations";
 import { toasterToast } from "../../util";
 import { getGamepadTextArea } from "../../gamepadTextArea";
-import { SteamAppTypeShortcut, SteamDeckCompatCategory, SteamTestResult, StoreCategory, type CompatdataData, type ID, type MetadataData } from "../../Interfaces";
+import { SteamAppTypeShortcut, SteamDeckCompatCategory, SteamTestResult, StoreCategory, type AchievementsData, type CompatdataData, type ID, type MetadataData } from "../../Interfaces";
 import type { MetadataManualOverride, MetadataModule } from "./MetadataModule";
 import type { FuzzySearchMetadataProvider } from "./providers/FuzzySearchMetadataProvider";
 import type { LizardByteGameDBMetadataProvider } from "./providers/LizardByteGameDBMetadataProvider";
@@ -26,6 +26,8 @@ import { getSteamMatchPreview, parseSteamAppId, searchSteamStore, type SteamMatc
 import { getDeckyMetadataSteamMatch, setDeckyMetadataSteamMatch } from "./DeckyMetadataBridge";
 import type { SteamMetadataProvider } from "./providers/SteamMetadataProvider";
 import type { FuzzySearchCompatdataProvider } from "../compatdata/providers/FuzzySearchCompatdataProvider";
+import type { RetroAchievementsAchievementsProvider, RetroAchievementsConsole, RetroAchievementsGame } from "../achievements/providers/RetroAchievementsAchievementsProvider";
+import { rankTitles } from "../../titleSearch";
 import {
 	actionBarStyle, actionButtonStyle, categoryGridStyle, compactTextStyle, editedFieldStyle, editedLabelStyle,
 	editedTagStyle, editorFocusTargetClassName, editorRootClassName, fieldStyle, labelStyle, pageStyle,
@@ -74,10 +76,16 @@ type Draft = {
 	steamAppId: string; // Steam match: ID or URL, empty for none
 	steamCompat: boolean; // With a Steam match: its compatibility (Valve) instead of MetaDeck's
 	emudeckId: string; // EmuDeck list entry ("PS2 · Title"): empty for automatic, "0" for none
+	title: string; // The shortcut's name
+	raGameId: string; // RetroAchievements game: empty for automatic (ROM hash), "0" for none
 };
 
 // Draft fields saved elsewhere than in the manual metadata edits
-const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId"];
+const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId", "title", "raGameId"];
+
+const RA_MEDIA = "https://media.retroachievements.org";
+const achievementImageStyle = { width: 40, height: 40, borderRadius: 4, flexShrink: 0 } as const;
+const achievementRowStyle = { display: "flex", alignItems: "center", gap: 12, padding: "6px 8px", borderRadius: 4 } as const;
 
 const COMPAT_LABELS: Record<SteamDeckCompatCategory, Parameters<typeof t>[0]> = {
 	[SteamDeckCompatCategory.UNKNOWN]: "unknown",
@@ -114,7 +122,7 @@ const steamImageStyle = {
 	borderRadius: 4
 } as const;
 
-function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = ""): Draft {
+function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = "", title = "", raGameId = ""): Draft {
 	return {
 		description: data?.description ?? "",
 		developers: namesToText(data?.developers),
@@ -125,7 +133,9 @@ function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true,
 			typeof c === "number" && EDITABLE_CATEGORY_IDS.has(c)),
 		steamAppId: steamAppId ? String(steamAppId) : "",
 		steamCompat,
-		emudeckId
+		emudeckId,
+		title,
+		raGameId
 	};
 }
 
@@ -231,7 +241,15 @@ export const MetadataEditor: FC = () => {
 		const id = emudeckProvider()?.overrides[appId];
 		return id === undefined ? "" : String(id);
 	};
-	const currentDraft = () => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat(), emudeckPin());
+	// The RetroAchievements provider and the game pinned for this app
+	const raProvider = () => state.modules.achievements.providers.find((provider) => provider.identifier === "ra") as
+		unknown as RetroAchievementsAchievementsProvider | undefined;
+	const raPin = () => {
+		const id = raProvider()?.overrides[appId];
+		return id === undefined ? "" : String(id);
+	};
+	const currentDraft = () => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat(), emudeckPin(),
+		appStore.GetAppOverviewByAppID(appId)?.display_name ?? "", raPin());
 
 	const [saved, setSaved] = useState<Draft>(currentDraft);
 	const [draft, setDraft] = useState<Draft>(saved);
@@ -271,6 +289,10 @@ export const MetadataEditor: FC = () => {
 			toasterToast(error, module);
 			return;
 		}
+		if (changes.includes("title") && !draft.title.trim()){
+			toasterToast(t("editorInvalidTitle"), module);
+			return;
+		}
 		const steamChanged = changes.includes("steamAppId");
 		const steamAppId = parseSteamAppId(draft.steamAppId);
 		if (steamChanged && draft.steamAppId.trim() && !steamAppId){
@@ -281,6 +303,21 @@ export const MetadataEditor: FC = () => {
 		try{
 			if (changes.some((change) => !NOT_METADATA.includes(change)))
 				await module.setManualOverride(appId, override);
+			if (changes.includes("title")){
+				const title = draft.title.trim();
+				(SteamClient.Apps as any).SetShortcutName(appId, title);
+				// Steam updates the app's name shortly after: wait for it before reloading the page
+				for (let i = 0; i < 20 && appStore.GetAppOverviewByAppID(appId)?.display_name !== title; i++)
+					await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			if (changes.includes("raGameId")){
+				await raProvider()?.setOverride(appId, draft.raGameId === "" ? undefined : Number(draft.raGameId));
+				// As the exclusion settings do: drop the achievements and the provider that gave them, then fetch again
+				const achievements = state.modules.achievements;
+				await achievements.onExcludedChange([], [appId]);
+				await achievements.fetchDataAsync(appId);
+				await achievements.apply(appId);
+			}
 			if (steamChanged){
 				await module.setSteamMatch(appId, steamAppId);
 				// Decky Metadata's community, news, layouts and trailers follow the same match
@@ -590,6 +627,99 @@ export const MetadataEditor: FC = () => {
 		t("editorCompatNone");
 	const hasSteamMatch = !!draft.steamAppId.trim();
 
+	// Achievements: the game's current achievements and the RetroAchievements game
+	const achievements = state.modules.achievements;
+	const achievementsData = achievements.fetchData(appId) as AchievementsData | undefined;
+	const achievementsSource = achievements.providers.find((provider) => provider.identifier === achievements.dataProviders[appId]);
+	const achievementGroups = (achievementsData?.groups ?? []).filter((group) => group.achievements.length);
+	const countUnlocked = (list: { bAchieved?: boolean }[]) => list.filter((achievement) => achievement.bAchieved).length;
+	const allAchievements = achievementGroups.flatMap((group) => group.achievements);
+	const currentRaId = achievementsSource?.identifier === "ra" && achievementsData ? String(achievementsData.id) : undefined;
+	const [openGroup, setOpenGroup] = useState<number | undefined>(undefined);
+
+	const [raConsoles, setRaConsoles] = useState<RetroAchievementsConsole[]>([]);
+	const [raConsole, setRaConsole] = useState<number | undefined>(undefined);
+	const [raQuery, setRaQuery] = useState(name);
+	const [raResults, setRaResults] = useState<RetroAchievementsGame[] | undefined>(undefined);
+	const [raSelected, setRaSelected] = useState<{ game: RetroAchievementsGame; unlocked?: number; total?: number } | undefined>(undefined);
+	const [raLabels, setRaLabels] = useState<Record<string, string>>({}); // "Super Mario 64 · Nintendo 64" by game ID
+
+	// The consoles, and this game's one first
+	useEffect(() => {
+		const ra = raProvider();
+		if (!ra?.isValid)
+			return;
+		void ra.getConsoles().then(setRaConsoles).catch((e) => module.logger.error("RetroAchievements consoles failed", e));
+		void ra.getAppConsole(appId).then((id) => setRaConsole((current) => current ?? id));
+	}, [appId]);
+
+	// Names of the current and pinned games
+	useEffect(() => {
+		const ra = raProvider();
+		for (const id of [currentRaId, draft.raGameId]){
+			if (!ra?.isValid || !id || id === "0" || raLabels[id])
+				continue;
+			void ra.getGameProgress(Number(id)).then((info: any) => {
+				if (info?.Title)
+					setRaLabels((labels) => ({ ...labels, [id]: `${info.Title} · ${info.ConsoleName}` }));
+			}).catch(() => {});
+		}
+	}, [currentRaId, draft.raGameId]);
+
+	const searchRa = async () => {
+		const ra = raProvider();
+		if (!ra || raConsole === undefined)
+			return;
+		setBusy(true);
+		setRaSelected(undefined);
+		try{
+			setRaResults(rankTitles(raQuery, await ra.getConsoleGames(raConsole), (game) => game.Title).slice(0, 20));
+		}
+		catch (e: any){
+			module.logger.error("RetroAchievements search failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+			setRaResults([]);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const selectRa = async (game: RetroAchievementsGame) => {
+		if (raSelected?.game.ID === game.ID){
+			setRaSelected(undefined);
+			return;
+		}
+		setRaSelected({ game });
+		setRaLabels((labels) => ({ ...labels, [String(game.ID)]: `${game.Title} · ${game.ConsoleName}` }));
+		setBusy(true);
+		try{
+			const info: any = await raProvider()?.getGameProgress(game.ID);
+			if (info)
+				setRaSelected({ game, unlocked: info.NumAwardedToUser ?? 0, total: info.NumAchievements ?? game.NumAchievements });
+		}
+		catch (e: any){
+			module.logger.error("RetroAchievements progress failed", e);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const raGameLabel = (id: string) => {
+		if (id === "")
+			return t("editorRaAutomatic");
+		if (id === "0")
+			return t("editorRaNone");
+		return raLabels[id] ? `${raLabels[id]} · ID ${id}` : `ID ${id}`;
+	};
+	const achievementsCurrent = achievementsData && achievementsSource ?
+		[achievementsSource.title,
+			currentRaId ? raGameLabel(currentRaId) : undefined,
+			t("editorAchievementsUnlocked").replace("{unlocked}", String(countUnlocked(allAchievements))).replace("{total}", String(allAchievements.length))]
+			.filter((part) => part).join(" · ") :
+		t("editorAchievementsNone");
+
 	// A field of the Source section, marked when it has manual edits
 	const field = (key: Parameters<typeof t>[0], edited: boolean, children: ReactNode) =>
 		<div style={edited ? { ...fieldStyle, ...editedFieldStyle } : fieldStyle}>
@@ -760,6 +890,8 @@ export const MetadataEditor: FC = () => {
 
 						<PanelSection title={sourceLabel}>
 							<PanelSectionRow>
+								{field("editorTitle", false,
+									<TextField value={draft.title} description={t("editorTitleDesc")} onChange={(e) => update({ title: e.target.value })}/>)}
 								{field("editorDescription", isEdited("description"),
 									GamepadTextArea ?
 										<GamepadTextArea
@@ -877,6 +1009,125 @@ export const MetadataEditor: FC = () => {
 													</DialogButton>
 													<DialogButton onClick={() => update({ emudeckId: "0" })} disabled={busy || draft.emudeckId === "0"}>
 														{t("editorEmuDeckUseNone")}
+													</DialogButton>
+												</div>
+											</div>)}
+									</PanelSectionRow>
+								</>}
+						</PanelSection>
+
+						<PanelSection title={t("editorAchievementsSection")}>
+							<PanelSectionRow>
+								<div style={compactTextStyle}>{`${t("editorCompatCurrent")}: ${achievementsCurrent}`}</div>
+							</PanelSectionRow>
+							{achievementGroups.map((group, i) =>
+								<PanelSectionRow key={`group-${i}`}>
+									<DialogButton
+										className={`${editorFocusTargetClassName} metadeck-editor__result`}
+										style={resultButtonStyle}
+										onClick={() => setOpenGroup(openGroup === i ? undefined : i)}>
+										<span>{group.name || t("editorBaseSet")}</span>
+										<span style={resultDetailStyle}>
+											{t("editorAchievementsUnlocked").replace("{unlocked}", String(countUnlocked(group.achievements))).replace("{total}", String(group.achievements.length))}
+										</span>
+									</DialogButton>
+									{openGroup === i &&
+										<div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+											{group.achievements.map((achievement, j) =>
+												<Focusable key={j} className={editorFocusTargetClassName} onActivate={() => {}} style={achievementRowStyle}>
+													<img src={achievement.bAchieved ? achievement.strImage : (achievement.strImageLocked ?? achievement.strImage)} style={achievementImageStyle}/>
+													<span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+														<span style={{ fontWeight: 600 }}>{achievement.strName}</span>
+														<span style={resultDetailStyle}>{achievement.strDescription}</span>
+														<span style={resultDetailStyle}>
+															{achievement.bAchieved && achievement.rtUnlocked ? new Date(achievement.rtUnlocked * 1000).toLocaleDateString() : t("editorLocked")}
+														</span>
+													</span>
+												</Focusable>
+											)}
+										</div>}
+								</PanelSectionRow>
+							)}
+							{!raProvider()?.isValid ?
+								<PanelSectionRow>
+									<div style={compactTextStyle}>{t("editorRaNotConfigured")}</div>
+								</PanelSectionRow> :
+								<>
+									<PanelSectionRow>
+										<div style={compactTextStyle}>{t("editorRaHelp")}</div>
+									</PanelSectionRow>
+									<PanelSectionRow>
+										<Dropdown
+											rgOptions={raConsoles.map((console) => ({ data: console.ID, label: console.Name }))}
+											selectedOption={raConsole}
+											onChange={(option) => {
+												setRaConsole(option.data);
+												setRaResults(undefined);
+												setRaSelected(undefined);
+											}}/>
+									</PanelSectionRow>
+									<PanelSectionRow>
+										<div style={searchRowStyle}>
+											<TextField value={raQuery} onChange={(e) => setRaQuery(e.target.value)}/>
+											<DialogButton style={searchButtonStyle} onClick={searchRa} disabled={busy || !raQuery.trim() || raConsole === undefined}>
+												{busy ? t("editorSearching") : t("editorRaSearch")}
+											</DialogButton>
+										</div>
+									</PanelSectionRow>
+									{raResults && !raResults.length &&
+										<PanelSectionRow>
+											<div style={compactTextStyle}>{t("editorRaNoResults")}</div>
+										</PanelSectionRow>}
+									{raResults?.map((game) =>
+										<PanelSectionRow key={game.ID}>
+											<DialogButton
+												className={`${editorFocusTargetClassName} metadeck-editor__result`}
+												style={{ ...resultButtonStyle, flexDirection: "row", alignItems: "center", gap: 12 }}
+												onClick={() => selectRa(game)}
+												disabled={busy}>
+												<img src={RA_MEDIA + game.ImageIcon} style={achievementImageStyle}/>
+												<span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+													<span>{game.Title}</span>
+													<span style={resultDetailStyle}>
+														{[game.ConsoleName,
+															t("editorRaAchievements").replace("{count}", String(game.NumAchievements)).replace("{points}", String(game.Points)),
+															`ID ${game.ID}`,
+															String(game.ID) === saved.raGameId || (saved.raGameId === "" && String(game.ID) === currentRaId) ? t("editorSteamCurrent") : undefined,
+															String(game.ID) === draft.raGameId && draft.raGameId !== saved.raGameId ? t("editorSteamSelected") : undefined]
+															.filter((part) => part).join(" · ")}
+													</span>
+												</span>
+											</DialogButton>
+											{raSelected?.game.ID === game.ID &&
+												<div style={{ ...previewStyle, marginTop: 8 }}>
+													<div style={{ fontWeight: 700 }}>{game.Title}</div>
+													{raSelected.total !== undefined &&
+														<div style={compactTextStyle}>
+															{t("editorRaProgress").replace("{unlocked}", String(raSelected.unlocked ?? 0)).replace("{total}", String(raSelected.total))}
+														</div>}
+													<div style={previewActionsStyle}>
+														<DialogButton
+															onClick={() => {
+																update({ raGameId: String(game.ID) });
+																toasterToast(t("editorRaSet"), module);
+															}}
+															disabled={busy}>
+															{t("editorRaUse")}
+														</DialogButton>
+													</div>
+												</div>}
+										</PanelSectionRow>
+									)}
+									<PanelSectionRow>
+										{field("editorRaGame", draft.raGameId !== "",
+											<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+												<div style={compactTextStyle}>{raGameLabel(draft.raGameId)}</div>
+												<div style={previewActionsStyle}>
+													<DialogButton onClick={() => update({ raGameId: "" })} disabled={busy || draft.raGameId === ""}>
+														{t("editorRaUseAutomatic")}
+													</DialogButton>
+													<DialogButton onClick={() => update({ raGameId: "0" })} disabled={busy || draft.raGameId === "0"}>
+														{t("editorRaUseNone")}
 													</DialogButton>
 												</div>
 											</div>)}
