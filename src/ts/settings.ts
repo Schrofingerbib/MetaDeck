@@ -47,6 +47,7 @@ export class Settings
 				rating: true,
 				install_size: true,
 				install_date: true,
+				manual_overrides: {},
 				excluded_apps: [],
 				providers_overrides: {},
 				providers: {

@@ -1,4 +1,4 @@
-// Add button second to last
+// Adds "Change Metadata..." to the game context menu, right before "Properties..."
 import {FC} from "react";
 import {useTranslations} from "./useTranslations";
 import {
@@ -11,6 +11,11 @@ import {
 	Patch
 } from "@decky/ui";
 import {AsyncMountable} from "./System";
+import Logger from "./logger";
+
+const logger = new Logger("ContextMenu");
+
+const ENTRY_KEY = "metadeck-change-metadata";
 
 const MetaDeckChangeMetadata: FC<{ appId: number }> = ({appId}) =>
 {
@@ -20,7 +25,7 @@ const MetaDeckChangeMetadata: FC<{ appId: number }> = ({appId}) =>
 		onSelected={async () =>
 		{
 			Navigation.CloseSideMenus();
-			Navigation.Navigate(`/metadeck/metadata/${appId}`);
+			Navigation.Navigate(`/metadeck/edit/${appId}`);
 		}}
 	>
 		{t("changeMetadata")}...
@@ -28,8 +33,15 @@ const MetaDeckChangeMetadata: FC<{ appId: number }> = ({appId}) =>
 }
 
 // Always add before "Properties..."
-const spliceChangeMetadata = (children: any[], appid: number) => {
-	children.find((x: any) => x?.key === 'properties')
+const spliceChangeMetadata = (children: any[], appid: number, shouldShow: (appId: number) => boolean) => {
+	// Re-renders must not stack copies
+	const existingIdx = children.findIndex((x: any) => x?.key === ENTRY_KEY);
+	if (existingIdx != -1)
+		children.splice(existingIdx, 1);
+
+	if (!shouldShow(appid))
+		return;
+
 	const propertiesMenuItemIdx = children.findIndex((item) =>
 		findInReactTree(
 			item,
@@ -37,20 +49,48 @@ const spliceChangeMetadata = (children: any[], appid: number) => {
 		)
 	)
 	children.splice(
-		propertiesMenuItemIdx,
+		propertiesMenuItemIdx >= 0 ? propertiesMenuItemIdx : children.length,
 		0,
-		<MetaDeckChangeMetadata key="metadeck-change-metadata"
+		<MetaDeckChangeMetadata key={ENTRY_KEY}
 			appId={appid}
 		/>
 	)
 }
 
 /**
- * Patches the game context menu.
- * @param LibraryContextMenu The game context menu.
- * @returns A patch to remove when the plugin dismounts.
+ * Game context menu component, looked up when mounting so a Steam change
+ * can't prevent the whole plugin from loading.
  */
-const contextMenuPatch = (LibraryContextMenu: any): AsyncMountable => {
+function findLibraryContextMenu(): any {
+	try{
+		return fakeRenderComponent(
+			findModuleChild((m) => {
+				if (typeof m !== 'object') return
+				for (const prop in m) {
+					if (m[prop]?.toString()?.includes('().LibraryContextMenu')) {
+						return Object.values(m).find(
+							(sibling) =>
+								sibling?.toString().includes('createElement') &&
+								sibling?.toString().includes('navigator:')
+						);
+					}
+				}
+				return
+			})
+		)?.type;
+	}
+	catch (e: any){
+		logger.error("Library context menu not found", e);
+		return undefined;
+	}
+}
+
+/**
+ * Patches the game context menu.
+ * @param shouldShow Whether the entry is shown for an app.
+ * @returns A mount that adds the entry, and removes it when dismounted.
+ */
+const contextMenuPatch = (shouldShow: (appId: number) => boolean): AsyncMountable => {
 	const patches: {
 		outer?: Patch
 		inner?: Patch
@@ -58,6 +98,12 @@ const contextMenuPatch = (LibraryContextMenu: any): AsyncMountable => {
 	return {
 		async mount(): Promise<void>
 		{
+			const LibraryContextMenu = findLibraryContextMenu();
+			if (!LibraryContextMenu?.prototype){
+				logger.error("Library context menu not found, \"Change Metadata...\" won't be available");
+				return;
+			}
+
 			patches.outer = afterPatch(
 				   LibraryContextMenu.prototype,
 				   'render',
@@ -69,10 +115,9 @@ const contextMenuPatch = (LibraryContextMenu: any): AsyncMountable => {
 								 component.type.prototype,
 								 'shouldComponentUpdate',
 								 ([nextProps]: any, shouldUpdate: any) => {
-									 console.log(nextProps)
 									 if (Array.isArray(nextProps.children))
 									 {
-										 const gtmIdx = nextProps.children.findIndex((x: any) => x?.key === 'metadeck-change-metadata');
+										 const gtmIdx = nextProps.children.findIndex((x: any) => x?.key === ENTRY_KEY);
 										 if (gtmIdx != -1) nextProps.children.splice(gtmIdx, 1)
 
 										 if (shouldUpdate === true)
@@ -89,7 +134,7 @@ const contextMenuPatch = (LibraryContextMenu: any): AsyncMountable => {
 											 {
 												 updatedAppid = parentOverview._owner.pendingProps.overview.appid
 											 }
-											 spliceChangeMetadata(nextProps.children, updatedAppid)
+											 spliceChangeMetadata(nextProps.children, updatedAppid, shouldShow)
 										 }
 									 }
 
@@ -98,7 +143,7 @@ const contextMenuPatch = (LibraryContextMenu: any): AsyncMountable => {
 						   )
 					   }
 					   else {
-						   spliceChangeMetadata(component.props.children, appid)
+						   spliceChangeMetadata(component.props.children, appid, shouldShow)
 					   }
 
 					   return component
@@ -109,27 +154,10 @@ const contextMenuPatch = (LibraryContextMenu: any): AsyncMountable => {
 		{
 			patches.outer?.unpatch()
 			patches.inner?.unpatch()
+			patches.outer = undefined
+			patches.inner = undefined
 		}
 	}
 }
-
-/**
- * Game context menu component.
- */
-export const LibraryContextMenu = fakeRenderComponent(
-	findModuleChild((m) => {
-		if (typeof m !== 'object') return
-		for (const prop in m) {
-			if (m[prop]?.toString()?.includes('().LibraryContextMenu')) {
-				return Object.values(m).find(
-					(sibling) =>
-						sibling?.toString().includes('createElement') &&
-						sibling?.toString().includes('navigator:')
-				);
-			}
-		}
-		return
-	})
-).type
 
 export default contextMenuPatch
