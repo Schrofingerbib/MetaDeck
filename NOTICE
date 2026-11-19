@@ -31,6 +31,10 @@ Ported components:
   itself derived from decky-steamgriddb by the SteamGridDB project
   (https://github.com/SteamGridDB/decky-steamgriddb), GPL-3.0.
 
+- src/ts/modules/metadata/IgnSearch.ts
+  The IGN search: same GraphQL queries and field mapping as
+  backend-rust/src/providers/ign.rs (v0.6.4), rewritten in TypeScript.
+
 The "Change Metadata" page (src/ts/modules/metadata/MetadataEditor.tsx) is a
 new implementation for MetaDeck, modelled on Decky Metadata's metadata editor
 (its "Source" fields and "Steam info fields").

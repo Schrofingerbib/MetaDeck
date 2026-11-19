@@ -278,5 +278,19 @@
 	"editorCategorySplitScreen": "Shared/Split Screen",
 	"editorCategoryFullController": "Full Controller Support",
 	"editorCategoryPartialController": "Partial Controller Support",
-	"editorCategoryMMO": "MMO"
+	"editorCategoryMMO": "MMO",
+	"editorSearch": "Search",
+	"editorSearchProvider": "Provider",
+	"editorSearchQuery": "Search for",
+	"editorSearchButton": "Search",
+	"editorSearching": "Searching…",
+	"editorResults": "Results",
+	"editorNoResults": "No results",
+	"editorSelect": "Select",
+	"editorCopyToFields": "Copy to Details",
+	"editorUseAsSource": "Use as Source",
+	"editorUseAsSourceDesc": "\"Use as Source\" makes this result the provider data of the game (kept updated by MetaDeck); \"Copy to Details\" only fills the Details fields, saved as manual edits when you press Save",
+	"editorCopied": "Copied to Details, review and save",
+	"editorSourceSet": "Source updated",
+	"editorSearchFailed": "Search failed"
 }

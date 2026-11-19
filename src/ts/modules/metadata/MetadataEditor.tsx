@@ -4,6 +4,7 @@ import {
 	DialogButton,
 	DialogControlsSection,
 	DialogControlsSectionHeader,
+	Dropdown,
 	Field,
 	Focusable,
 	SidebarNavigation,
@@ -11,13 +12,34 @@ import {
 	ToggleField,
 	useParams
 } from "@decky/ui";
-import { FaListCheck, FaRegFileLines } from "react-icons/fa6";
+import { FaListCheck, FaMagnifyingGlass, FaRegFileLines } from "react-icons/fa6";
 import { useMetaDeckState } from "../../MetaDeckState";
 import { t } from "../../useTranslations";
 import { toasterToast } from "../../util";
 import { getGamepadTextArea } from "../../gamepadTextArea";
-import { SteamAppTypeShortcut, StoreCategory, type MetadataData } from "../../Interfaces";
-import type { MetadataManualOverride } from "./MetadataModule";
+import { SteamAppTypeShortcut, StoreCategory, type ID, type MetadataData } from "../../Interfaces";
+import type { MetadataManualOverride, MetadataModule } from "./MetadataModule";
+import type { FuzzySearchMetadataProvider } from "./providers/FuzzySearchMetadataProvider";
+import { fetchIgn, searchIgn } from "./IgnSearch";
+
+// Sources offered by the Search tab: LizardByte first (best for emulated games)
+type SearchSource = "lizardbyte" | "rawg" | "ign";
+
+type SearchResult = {
+	source: SearchSource;
+	id: ID;
+	title: string;
+	snippet: string;
+	entry?: MetadataData; // MetaDeck providers
+	slug?: string; // IGN
+};
+
+function fuzzyProvider(module: MetadataModule, source: "lizardbyte" | "rawg"): FuzzySearchMetadataProvider<"lizardbyte" | "rawg"> | undefined {
+	return module.providers.find((provider) => provider.identifier === source) as FuzzySearchMetadataProvider<"lizardbyte" | "rawg"> | undefined;
+}
+
+const snippet = (text?: string, length = 160) =>
+	!text ? "" : text.length > length ? `${text.slice(0, length).trimEnd()}…` : text;
 
 // Steam store categories that can be toggled by hand ("Steam info fields").
 // Achievements are left out: the achievements module decides them.
@@ -124,6 +146,97 @@ export const MetadataEditor: FC = () => {
 	const providerId = module.dataProviders[appId];
 	const managed = overview?.app_type === SteamAppTypeShortcut && !module.excludedApps.includes(appId);
 
+	// Search tab
+	const sources = ([
+		{ data: "lizardbyte", label: fuzzyProvider(module, "lizardbyte")?.title ?? "LizardByte", valid: !!fuzzyProvider(module, "lizardbyte")?.isValid },
+		{ data: "rawg", label: fuzzyProvider(module, "rawg")?.title ?? "RAWG", valid: !!fuzzyProvider(module, "rawg")?.isValid },
+		{ data: "ign", label: "IGN", valid: true }
+	] as { data: SearchSource; label: string; valid: boolean }[]).filter((source) => source.valid);
+	const [searchSource, setSearchSource] = useState<SearchSource>(sources[0]?.data ?? "ign");
+	const [query, setQuery] = useState(overview?.display_name ?? "");
+	const [results, setResults] = useState<SearchResult[] | undefined>(undefined);
+	const [selected, setSelected] = useState<{ result: SearchResult; details?: MetadataData } | undefined>(undefined);
+	const [busy, setBusy] = useState(false);
+
+	const search = async () => {
+		setBusy(true);
+		setSelected(undefined);
+		try{
+			if (searchSource === "ign"){
+				const found = await searchIgn(query);
+				setResults(found.map((r) => ({ source: "ign", id: r.id, title: r.title, snippet: snippet(r.description), slug: r.slug })));
+			}
+			else{
+				const found = await fuzzyProvider(module, searchSource)?.searchByQuery(query) ?? [];
+				setResults(found.map((entry) => ({ source: searchSource, id: entry.id, title: entry.title, snippet: snippet(entry.description), entry })));
+			}
+		}
+		catch (e: any){
+			module.logger.error("Metadata search failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+			setResults([]);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const select = async (result: SearchResult) => {
+		setBusy(true);
+		try{
+			const details = result.source === "ign" ?
+				await fetchIgn(result.slug!) :
+				await fuzzyProvider(module, result.source)?.getResultDetails(appId, result.entry!);
+			setSelected({ result, details });
+		}
+		catch (e: any){
+			module.logger.error("Metadata result details failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	// Fills the Details fields with the result: nothing is saved until "Save"
+	const copyToFields = (details: MetadataData) => {
+		const values = draftFrom(details);
+		setDraft((current) => ({
+			description: values.description || current.description,
+			developers: values.developers || current.developers,
+			publishers: values.publishers || current.publishers,
+			releaseDate: values.releaseDate || current.releaseDate,
+			rating: values.rating || current.rating,
+			categories: values.categories.length ? values.categories : current.categories
+		}));
+		toasterToast(t("editorCopied"), module);
+	};
+
+	// Makes the result this app's provider data (MetaDeck providers only), as the override settings do
+	const applyAsSource = async (result: SearchResult) => {
+		if (result.source === "ign")
+			return;
+		setBusy(true);
+		try{
+			await fuzzyProvider(module, result.source)?.setOverride(appId, result.id);
+			const oldOverrides = module.providerOverrides;
+			const newOverrides = { ...oldOverrides, [appId]: result.source } as typeof oldOverrides;
+			module.providerOverrides = newOverrides;
+			await module.onOverridesChange(oldOverrides, newOverrides);
+			await module.fetchDataAsync(appId);
+			await module.refreshApp(appId);
+			setDraft(draftFrom(module.fetchData(appId)));
+			toasterToast(t("editorSourceSet"), module);
+		}
+		catch (e: any){
+			module.logger.error("Setting the metadata source failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
 	const update = (changes: Partial<Draft>) => setDraft((current) => ({ ...current, ...changes }));
 	const edited = (field: keyof MetadataManualOverride) => manual?.[field] !== undefined;
 	const label = (key: Parameters<typeof t>[0], field: keyof MetadataManualOverride) =>
@@ -214,6 +327,61 @@ export const MetadataEditor: FC = () => {
 							</Field>
 						</DialogControlsSection>
 						{actions}
+					</DialogBody>
+				)
+			},
+			{
+				title: t("editorSearch"),
+				icon: <FaMagnifyingGlass/>,
+				content: (
+					<DialogBody>
+						<DialogControlsSection>
+							<Field label={t("editorSearchProvider")} childrenLayout="below">
+								<Dropdown
+									rgOptions={sources.map((source) => ({ data: source.data, label: source.label }))}
+									selectedOption={searchSource}
+									onChange={(option) => {
+										setSearchSource(option.data);
+										setResults(undefined);
+										setSelected(undefined);
+									}}/>
+							</Field>
+							<Field label={t("editorSearchQuery")} childrenLayout="below">
+								<TextField value={query} onChange={(e) => setQuery(e.target.value)}/>
+							</Field>
+							<Field>
+								<DialogButton onClick={search} disabled={busy || !query.trim()}>
+									{busy ? t("editorSearching") : t("editorSearchButton")}
+								</DialogButton>
+							</Field>
+						</DialogControlsSection>
+
+						{selected?.details &&
+							<DialogControlsSection>
+								<DialogControlsSectionHeader>{selected.result.title}</DialogControlsSectionHeader>
+								<Field label={t("editorDescription")} description={snippet(selected.details.description, 400) || "—"} focusable={true}/>
+								<Field label={t("editorDevelopers")} description={namesToText(selected.details.developers) || "—"}/>
+								<Field label={t("editorPublishers")} description={namesToText(selected.details.publishers) || "—"}/>
+								<Field label={t("editorReleaseDate")} description={dateToText(selected.details.release_date) || "—"}/>
+								<Field label={t("editorRating")} description={selected.details.rating ? String(Math.round(selected.details.rating)) : "—"}/>
+								<Focusable style={{ display: "flex", gap: "1em", marginTop: "1em" }} flow-children="horizontal">
+									<DialogButton onClick={() => copyToFields(selected.details!)} disabled={busy}>{t("editorCopyToFields")}</DialogButton>
+									{selected.result.source !== "ign" &&
+										<DialogButton onClick={() => applyAsSource(selected.result)} disabled={busy}>{t("editorUseAsSource")}</DialogButton>}
+								</Focusable>
+								{selected.result.source !== "ign" && <Field description={t("editorUseAsSourceDesc")}/>}
+							</DialogControlsSection>}
+
+						{results &&
+							<DialogControlsSection>
+								<DialogControlsSectionHeader>{t("editorResults")}</DialogControlsSectionHeader>
+								{!results.length && <Field label={t("editorNoResults")} focusable={true}/>}
+								{results.map((result) =>
+									<Field key={`${result.source}-${result.id}`} label={result.title} description={result.snippet} childrenContainerWidth="min">
+										<DialogButton onClick={() => select(result)} disabled={busy}>{t("editorSelect")}</DialogButton>
+									</Field>
+								)}
+							</DialogControlsSection>}
 					</DialogBody>
 				)
 			},
