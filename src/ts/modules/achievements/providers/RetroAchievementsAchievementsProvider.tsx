@@ -396,15 +396,17 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 			if (!details)
 				return undefined;
 
-			// Retrieve parent games
+			// Retrieve parent games: a subset has its game as parent ("Super Mario 64 [Subset - Bonus]" -> "Super Mario 64").
+			// The loop never moved up before, so a subset (ParentGameID set) looped forever and blocked the provider
 			let parents: Record<ID, typeof game> = { [game.ID]: game };
-			while((game as any).ParentGameID){
-				let newGame = await this.getGameInfoAndProgressInternal((game as any).ParentGameID);
-				if(!newGame)
+			let child = game;
+			while((child as any).ParentGameID && !parents[(child as any).ParentGameID]){
+				const parent = await this.getGameInfoAndProgressInternal((child as any).ParentGameID);
+				if(!parent)
 					break;
 
-				parents[game.ID] = newGame;
-				newGame = game;
+				parents[parent.ID] = parent;
+				child = parent;
 			}
 
 			const parentGame = game;
@@ -417,7 +419,8 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 						continue;
 
 					for(let subsetId of this.parentSubsets[gameId]){
-						if(subsets[subsetId])
+						// The chosen subset is already the base set
+						if(subsets[subsetId] || parents[subsetId])
 							continue;
 
 						game = await this.getGameInfoAndProgressInternal(subsetId);
