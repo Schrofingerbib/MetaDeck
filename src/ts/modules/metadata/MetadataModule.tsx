@@ -1164,7 +1164,8 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	override async provideDefault(appId: number): Promise<MetadataData | undefined>
 	{
-		if(this.excludedApps.includes(appId))
+		// Software without an entry is left to Steam (excluded), not shown with an empty default
+		if(this.excludedApps.includes(appId) || this.isSoftware(appId))
 			return undefined;
 
 		const details = await getAppDetails(appId);
