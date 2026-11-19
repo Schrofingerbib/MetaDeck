@@ -34,6 +34,13 @@ function frontEndConsoleNames(launchCommand?: string): string[] | undefined{
 	return system ? SYSTEM_CONSOLES[system] : undefined;
 }
 
+/**
+ * Entry ID: console and title ("PS2 · Resident Evil Code: Veronica X"). Row numbers were used before,
+ * but they shift when rows are removed or reordered in the sheet, and pinned entries would then show
+ * another game's reports.
+ */
+const entryKey = (row: VerifiedDBResults) => `${row.Console?.trim()} · ${row.Game}`;
+
 export interface EmuDeckCompatdataProviderConfig extends FuzzySearchCompatdataProviderConfig{
 
 }
@@ -83,6 +90,19 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 			.filter(r => !r.Platform || r.Platform.trim() === "Steam Deck")
 			.map((r, i) => ({ ...r, Row: i }));
 		this.verifiedTitles = [...new Set(this.verifiedRows.map(r => r.Game))];
+
+		// Pinned row numbers (MetaDeck 4.2.0 and earlier) become entry keys, while they still point to their rows
+		const overrides = { ...this.overrides };
+		let migrated = false;
+		for (const [appId, id] of Object.entries(overrides)){
+			const row = typeof id === "number" && id > 0 ? this.verifiedRows[id] : undefined; // 0: no entry
+			if (row){
+				overrides[appId as unknown as number] = entryKey(row);
+				migrated = true;
+			}
+		}
+		if (migrated)
+			this.overrides = overrides;
 	}
 
 	private async getConsoleNames(appId: number): Promise<string[] | undefined>{
@@ -205,7 +225,7 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 
 		return {
 			title: reports[0].Game,
-			id: Math.min(...reports.map(r => r.Row)),
+			id: entryKey(reports[0]),
 			// The sheet's column is "Emulator " (with a trailing space)
 			console: reports[0].Console?.trim(),
 			emulator: ((reports[0] as any)["Emulator "] ?? reports[0].Emulator)?.trim(),
@@ -223,8 +243,12 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 
 	// Pinned entries are looked up by ID (any title or console)
 	override getEntryById(id: ID): CompatdataData | undefined{
-		const row = this.verifiedRows.find(r => r.Row === Number(id));
-		return row ? this.toEntry(this.verifiedRows.filter(r => r.Game === row.Game && r.Console === row.Console)) : undefined;
+		// Row numbers: pins not migrated yet
+		const row = typeof id === "number" || /^[0-9]+$/.test(id) ?
+			this.verifiedRows.find(r => r.Row === Number(id)) :
+			this.verifiedRows.find(r => entryKey(r) === id);
+		const key = row ? entryKey(row) : undefined;
+		return key ? this.toEntry(this.verifiedRows.filter(r => entryKey(r) === key)) : undefined;
 	}
 
 	protected override async enrichCompatdataForGame(appId: number, game: CompatdataData): Promise<void> {

@@ -73,7 +73,7 @@ type Draft = {
 	categories: number[]; // Editable categories only
 	steamAppId: string; // Steam match: ID or URL, empty for none
 	steamCompat: boolean; // With a Steam match: its compatibility (Valve) instead of MetaDeck's
-	emudeckId: string; // EmuDeck list entry: empty for automatic, "0" for none
+	emudeckId: string; // EmuDeck list entry ("PS2 · Title"): empty for automatic, "0" for none
 };
 
 // Draft fields saved elsewhere than in the manual metadata edits
@@ -88,9 +88,9 @@ const COMPAT_LABELS: Record<SteamDeckCompatCategory, Parameters<typeof t>[0]> = 
 const compatLabel = (category?: SteamDeckCompatCategory) => t(COMPAT_LABELS[category ?? SteamDeckCompatCategory.UNKNOWN] ?? "unknown");
 const compatNotes = (entry: CompatdataData) =>
 	(entry.deck_test_results ?? []).filter((r) => r.test_result === SteamTestResult.Notes).map((r) => r.test_loc_token);
-/** "Gamecube · Dolphin · Verified · ID 512" */
+/** "Gamecube · Dolphin · Verified" (the entry ID is the console and title) */
 const compatDetail = (entry: CompatdataData) =>
-	[entry.console, entry.emulator, compatLabel(entry.deck_compat_category), `ID ${entry.id}`].filter((part) => part).join(" · ");
+	[entry.console, entry.emulator, compatLabel(entry.deck_compat_category)].filter((part) => part).join(" · ");
 
 const namesToText = (people?: { name: string }[]) => (people ?? []).map((p) => p.name).join(", ");
 const textToNames = (text: string) => text.split(",").map((name) => name.trim()).filter((name) => name.length);
@@ -300,7 +300,8 @@ export const MetadataEditor: FC = () => {
 			}
 			const emudeckChanged = changes.includes("emudeckId");
 			if (emudeckChanged)
-				await emudeckProvider()?.setOverride(appId, draft.emudeckId === "" ? undefined : Number(draft.emudeckId));
+				await emudeckProvider()?.setOverride(appId,
+				draft.emudeckId === "" ? undefined : draft.emudeckId === "0" ? 0 : draft.emudeckId);
 			// The compatibility depends on the Steam match and on these choices
 			if (steamChanged || compatChanged || emudeckChanged){
 				// A chosen EmuDeck entry answers for this game (before the emulator providers),
@@ -578,8 +579,8 @@ export const MetadataEditor: FC = () => {
 			return t("editorEmuDeckAutomatic");
 		if (id === "0")
 			return t("editorEmuDeckNone");
-		const entry = emudeckProvider()?.getEntryById(Number(id));
-		return entry ? `${entry.title} · ${compatDetail(entry)}` : `ID ${id}`;
+		const entry = emudeckProvider()?.getEntryById(id);
+		return entry ? `${entry.title} · ${compatDetail(entry)}` : id;
 	};
 
 	const compatData = compat.fetchData(appId);
