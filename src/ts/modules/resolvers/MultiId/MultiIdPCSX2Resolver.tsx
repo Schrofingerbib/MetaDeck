@@ -1,4 +1,4 @@
-import {getLaunchCommand, isPCSX2Game, romRegex} from "../../../shortcuts";
+import {getFrontEndSystem, getLaunchCommand, isEmulatedGame, isPCSX2Game, romRegex} from "../../../shortcuts";
 import {getAppDetails} from "../../../util";
 import { call } from "@decky/api";
 import { MultiIdSerialStationResolver, type MultiIdSerialStationResolverCache, type MultiIdSerialStationResolverConfig } from "./MultiIdSerialStationResolver";
@@ -20,7 +20,9 @@ export class MultiIdPCSX2Resolver extends MultiIdSerialStationResolver<"pcsx2">{
 		if (!details)
 			return false;
 
-		return isPCSX2Game(getLaunchCommand(details));
+		const launchCommand = getLaunchCommand(details);
+		// Also PS2 games launched by RetroDECK / ES-DE (PCSX2 there too): the serial comes from PCSX2's game list
+		return isPCSX2Game(launchCommand) || (isEmulatedGame(launchCommand) && getFrontEndSystem(launchCommand) === "ps2");
 	}
 
 	protected async retrieveTitleId(appId: number): Promise<string | undefined> {

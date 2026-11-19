@@ -150,6 +150,14 @@ export function isDuckstationGame(launchCommand: string)
 	return isEmulatedGame(launchCommand) && launchCommand.includes("/duckstation.sh");
 }
 
+/** System of a game launched by a front-end: RetroDECK ("-s ps2") or an ES-DE ".../roms/ps2/..." path */
+export function getFrontEndSystem(launchCommand?: string): string | undefined
+{
+	const system = launchCommand?.match(/(?:^|\s)(?:-s|--system)\s+"?([A-Za-z0-9_-]+)/)?.[1] ??
+		launchCommand?.match(/\/roms\/([A-Za-z0-9_-]+)\//)?.[1];
+	return system?.toLowerCase().replace(/-/g, "_");
+}
+
 export function isPCSX2Game(launchCommand: string)
 {
 	return isEmulatedGame(launchCommand) && (launchCommand.includes("/pcsx2-qt.sh") || launchCommand.includes("/pcsx2.sh"));

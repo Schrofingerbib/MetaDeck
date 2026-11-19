@@ -3,7 +3,7 @@ import {distanceWithLimit, getAppDetails, toasterToast} from "../../../util";
 import {fetchNoCors} from "@decky/api";
 import {t} from "../../../useTranslations";
 import {
-	getLaunchCommand, isCemuGame, isDolphinGame, isDuckstationGame, isEmulatedGame, isFlycastGame,
+	getFrontEndSystem, getLaunchCommand, isCemuGame, isDolphinGame, isDuckstationGame, isEmulatedGame, isFlycastGame,
 	isMelonDSGame, isMGBAGame, isPCSX2Game, isPPSSPPGame, isRosaliesMupenGUIGame, isRPCS3Game,
 	isShadPS4Game, isRyujinxGame, isVita3KGame, isXemuGame, isXeniaGame
 } from "../../../shortcuts";
@@ -30,9 +30,8 @@ const SYSTEM_CONSOLES: Record<string, string[]> = {
 
 /** Consoles of a game launched by a front-end (RetroDECK "-s ps2", or an ES-DE ".../roms/ps2/..." path) */
 function frontEndConsoleNames(launchCommand?: string): string[] | undefined{
-	const system = launchCommand?.match(/(?:^|\s)(?:-s|--system)\s+"?([A-Za-z0-9_-]+)/)?.[1] ??
-		launchCommand?.match(/\/roms\/([A-Za-z0-9_-]+)\//)?.[1];
-	return system ? SYSTEM_CONSOLES[system.toLowerCase().replace(/-/g, "_")] : undefined;
+	const system = getFrontEndSystem(launchCommand);
+	return system ? SYSTEM_CONSOLES[system] : undefined;
 }
 
 export interface EmuDeckCompatdataProviderConfig extends FuzzySearchCompatdataProviderConfig{

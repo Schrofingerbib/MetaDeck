@@ -604,7 +604,59 @@ class Plugin:
 				if match is not None:
 					return mm[match.end()+1:match.end()+12].decode('ascii').replace('_', '').replace('.', '')
 		
+		# Other formats (chd, cso, gz...): the serial PCSX2 found when scanning its game list
+		return self._pcsx2_game_list_serial(rom_path)
+
+	def _pcsx2_game_list_serial(self, rom_path: str) -> str | None:
+		home = Path(decky.DECKY_USER_HOME)
+		caches = [
+			home / ".var" / "app" / "net.retrodeck.retrodeck" / "config" / "PCSX2" / "cache" / "gamelist.cache", # RetroDECK
+			home / ".var" / "app" / "net.pcsx2.PCSX2" / "config" / "PCSX2" / "cache" / "gamelist.cache", # Flatpak
+			home / ".config" / "PCSX2" / "cache" / "gamelist.cache" # AppImage (EmuDeck)
+		]
+		target = os.path.realpath(rom_path)
+		for cache in caches:
+			try:
+				data = cache.read_bytes()
+			except OSError:
+				continue
+			try:
+				for path, serial in self._pcsx2_game_list_entries(data):
+					if serial and (path == rom_path or os.path.realpath(path) == target):
+						return serial.replace('-', '').replace('_', '').replace('.', '')
+			except Exception as e:
+				decky.logger.error(f"Could not read the PCSX2 game list cache {cache}: {e}")
 		return None
+
+	@staticmethod
+	def _pcsx2_game_list_entries(data: bytes):
+		"""(path, serial) of each entry of a PCSX2 game list cache ("GLCE")"""
+		if data[:4] != b"GLCE":
+			return
+
+		def string_at(offset: int):
+			if offset + 4 > len(data):
+				return None
+			(length,) = struct.unpack_from("<I", data, offset)
+			end = offset + 4 + length
+			if length > 4096 or end > len(data):
+				return None
+			try:
+				return data[offset + 4:end].decode("utf-8"), end
+			except UnicodeDecodeError:
+				return None
+
+		# Each entry: path, serial, title (u32 length + UTF-8), then fixed fields whose size depends on
+		# the cache version, so the next entry is found by scanning for the next absolute path
+		offset = 8
+		while offset < len(data):
+			path = string_at(offset)
+			serial = string_at(path[1]) if path and path[0].startswith("/") else None
+			if not serial:
+				offset += 1
+				continue
+			yield path[0], serial[0]
+			offset = serial[1]
 
 	async def dolphin_get_id6(self, rom_path: str) -> str | None:
 		if not os.path.isfile(rom_path):
