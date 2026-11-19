@@ -273,7 +273,9 @@ export const MetadataEditor: FC = () => {
 			// The compatibility depends on the Steam match and on this choice
 			if (steamChanged || compatChanged){
 				const compat = state.modules.compatdata;
-				await compat.removeCache(appId);
+				// As the exclusion settings do: also forget the provider that answered last time,
+				// otherwise it is asked first again and the Steam match provider is never reached
+				await compat.onExcludedChange([], [appId]);
 				await compat.fetchDataAsync(appId);
 				await compat.apply(appId);
 			}
