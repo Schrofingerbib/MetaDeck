@@ -134,7 +134,9 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 				rgFranchises: []
 			};
 
-			appDetailsCache.SetCachedDataForApp(appId, "descriptions", 1, appData.descriptionsData);
+			// Cache plain text only: a serialized React element comes back as {key, ref, props}
+			// after a restart and breaks "Game Info" (React error #31)
+			appDetailsCache.SetCachedDataForApp(appId, "descriptions", 1, { strFullDescription: desc, strSnippet: '' });
 			appDetailsCache.SetCachedDataForApp(appId, "associations", 2, appData.associationData);
 		});
 	};
@@ -183,7 +185,8 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 												};
 											}
 
-											appDetailsCache.SetCachedDataForApp(args[0], "descriptions", 1, appData.descriptionsData);
+											// Cache plain text only (see removeCache): Markdown elements break "Game Info" after a restart
+											appDetailsCache.SetCachedDataForApp(args[0], "descriptions", 1, { strFullDescription: desc, strSnippet: snip });
 										});
 
 									return appData.descriptionsData;
@@ -241,7 +244,10 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 						   if (appStore.GetAppOverviewByAppID(args[0]).app_type == SteamAppTypeShortcut)
 						   {
 							   let appData = appDetailsStore.GetAppData(args[0])
-							   if (appData && !appData?.associationData)
+							   // Also refill when left empty (removeCache writes empty associations), but only if we have something to put
+							   const emptyAssociations = !appData?.associationData?.rgDevelopers?.length && !appData?.associationData?.rgPublishers?.length;
+							   const cached = appData && emptyAssociations ? module.fetchData(args[0]) : undefined;
+							   if (appData && (!appData?.associationData || (emptyAssociations && (cached?.developers?.length || cached?.publishers?.length))))
 							   {
 								   const data = module.fetchData(args[0])
 								   const devs = data?.developers ?? [];
@@ -283,6 +289,7 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 							   return ret;
 
 						   module.bypassCounter = 4;
+						   return ret;
 					   }
 				)
 			}
@@ -408,7 +415,7 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 					"GetCanonicalReleaseDate",
 					function (_, ret) {
 						// @ts-ignore
-						if (!module.isValid || !module.releaseDate || module.excludedApps.includes(this.appId))
+						if (!module.isValid || !module.releaseDate || module.excludedApps.includes(this.appid))
 							return ret;
 
 						module.logger.debug(ret);
@@ -888,10 +895,19 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 	protected override async fetchDataProviders(appId: number): Promise<[ProviderIdentifier<MetadataModule>, MetadataData] | undefined> {
 		let results: Partial<Record<ProviderIdentifier<MetadataModule>, MetadataData>> = {};
 		for (const provider of this.providers){
-			if(!provider.enabled || !await provider.test(appId))
+			// isValid (not just enabled): a provider without its API key must be skipped, not throw.
+			// A failing provider must not stop the remaining ones.
+			let data: MetadataData | undefined;
+			try{
+				if(!provider.isValid || provider.excludedAppsSelf.includes(appId) || !await provider.test(appId))
+					continue;
+
+				data = await provider.provide(appId);
+			}
+			catch (e: any){
+				this.logger.error(`Provider ${provider.identifier} failed for ${appId}`, e);
 				continue;
-			
-			const data = await provider.provide(appId);
+			}
 			if(!data || this.isEmpty(data))
 				continue;
 			

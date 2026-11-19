@@ -308,10 +308,18 @@ export abstract class Module<
 
 	protected async fetchDataProviders(appId: number): Promise<[ProviderIdentifier<Module<Identifier, Prov>>, Data] | undefined>{
 		for (const provider of this.providers){
-			if(!provider.isValid || provider.excludedAppsSelf.includes(appId) || !await provider.test(appId))
+			// A failing provider (network error, bad API key...) must not stop the remaining ones
+			let data: Data | undefined;
+			try{
+				if(!provider.isValid || provider.excludedAppsSelf.includes(appId) || !await provider.test(appId))
+					continue;
+
+				data = await provider.provide(appId);
+			}
+			catch (e: any){
+				this.logger.error(`Provider ${provider.identifier} failed for ${appId}`, e);
 				continue;
-			
-			const data = await provider.provide(appId);
+			}
 			if(!data || this.isEmpty(data))
 				continue;
 			
@@ -461,8 +469,16 @@ export abstract class Module<
 		{
 			if (this.enabled){
 				for (const provider of this.providers){
-					if (provider.enabled)
-						await provider.mount();
+					// Mounts run in series: a provider failing to mount (e.g. missing credentials)
+					// must not abort the remaining providers and routes (settings page stays black otherwise)
+					if (provider.enabled){
+						try{
+							await provider.mount();
+						}
+						catch (e: any){
+							this.logger.error(`Provider ${provider.identifier} mount failed`, e);
+						}
+					}
 					if(this.state.loadingData.currentModule){
 						this.state.loadingData.currentModule.processed++;
 						this.state.notifyUpdate();

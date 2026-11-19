@@ -891,7 +891,8 @@ export class AchievementsModule extends Module<"achievements", AchievementsProvi
 					});
 				},
 				dismount() {
-					cacheFixSubscription();
+					// Not set if mount failed or never ran
+					cacheFixSubscription?.();
 				}
 			});
 
