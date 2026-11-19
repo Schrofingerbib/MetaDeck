@@ -39,6 +39,11 @@ Ported components:
   The "Find a Steam Match" store search and preview: same store endpoints as
   backend-rust/src/providers/steam.rs (v0.6.4), rewritten in TypeScript.
 
+- src/ts/steamMatchFeatures.ts
+  The community feed of a matched Steam game: same "appcommunityfeed" URL
+  rewrite as src/communityFeedUrl.ts (v0.6.4). Its Activity part is a new
+  implementation (Steam's own activity store loads the matched game).
+
 - src/ts/modules/compatdata/providers/SteamMatchCompatdataProvider.tsx
   Valve's compatibility of the matched Steam app: same store report
   (ajaxgetdeckappcompatibilityreport) as backend-rust/src/providers/steam.rs
