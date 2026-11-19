@@ -62,7 +62,10 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	install_date: boolean,
 	// Manual edits, applied field by field over the provider data.
 	// Kept in the config so they survive cache clears and provider changes.
-	manual_overrides: Record<number, MetadataManualOverride>
+	manual_overrides: Record<number, MetadataManualOverride>,
+	// Steam app matched by hand to a shortcut ("Find a Steam Match"), for Steam-backed features
+	// (community, news...). Independent from the metadata provider.
+	steam_matches: Record<number, number>
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
@@ -125,6 +128,23 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		await this.saveConfig();
 
 		await this.refreshApp(appId);
+	}
+
+	getSteamMatch(appId: number): number | undefined
+	{
+		return this.config.steam_matches?.[appId];
+	}
+
+	/** Saves (or removes, with undefined) the Steam app matched to a shortcut */
+	async setSteamMatch(appId: number, steamAppId: number | undefined): Promise<void>
+	{
+		const matches = { ...(this.config.steam_matches ?? {}) };
+		if (steamAppId)
+			matches[appId] = steamAppId;
+		else
+			delete matches[appId];
+		this.config.steam_matches = matches;
+		await this.saveConfig();
 	}
 
 	/** Provider data only, without manual edits */

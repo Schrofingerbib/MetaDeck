@@ -48,6 +48,7 @@ export class Settings
 				install_size: true,
 				install_date: true,
 				manual_overrides: {},
+				steam_matches: {},
 				excluded_apps: [],
 				providers_overrides: {},
 				providers: {

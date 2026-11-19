@@ -1,4 +1,4 @@
-import React, { FC, ReactNode, useMemo, useRef, useState } from "react";
+import React, { FC, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ConfirmModal,
 	DialogButton,
@@ -22,6 +22,9 @@ import type { MetadataManualOverride, MetadataModule } from "./MetadataModule";
 import type { FuzzySearchMetadataProvider } from "./providers/FuzzySearchMetadataProvider";
 import type { LizardByteGameDBMetadataProvider } from "./providers/LizardByteGameDBMetadataProvider";
 import { fetchIgn, searchIgn } from "./IgnSearch";
+import { getSteamMatchPreview, parseSteamAppId, searchSteamStore, type SteamMatchCandidate, type SteamMatchPreview } from "./SteamMatch";
+import { getDeckyMetadataSteamMatch, setDeckyMetadataSteamMatch } from "./DeckyMetadataBridge";
+import type { SteamMetadataProvider } from "./providers/SteamMetadataProvider";
 import {
 	actionBarStyle, actionButtonStyle, categoryGridStyle, compactTextStyle, editedFieldStyle, editedLabelStyle,
 	editedTagStyle, editorFocusTargetClassName, editorRootClassName, fieldStyle, labelStyle, pageStyle,
@@ -67,6 +70,7 @@ type Draft = {
 	releaseDate: string; // YYYY-MM-DD, empty for none
 	rating: string; // 0-100, empty for none
 	categories: number[]; // Editable categories only
+	steamAppId: string; // Steam match: ID or URL, empty for none
 };
 
 const namesToText = (people?: { name: string }[]) => (people ?? []).map((p) => p.name).join(", ");
@@ -77,11 +81,21 @@ const sameList = (a: (string | number)[], b: (string | number)[]) =>
 const snippet = (text?: string, length = 160) =>
 	!text ? "" : text.length > length ? `${text.slice(0, length).trimEnd()}…` : text;
 
-function fuzzyProvider(module: MetadataModule, source: "lizardbyte" | "rawg"): FuzzySearchMetadataProvider<"lizardbyte" | "rawg"> | undefined {
-	return module.providers.find((provider) => provider.identifier === source) as FuzzySearchMetadataProvider<"lizardbyte" | "rawg"> | undefined;
+type FuzzySource = "lizardbyte" | "rawg" | "steam";
+
+function fuzzyProvider(module: MetadataModule, source: FuzzySource): FuzzySearchMetadataProvider<FuzzySource> | undefined {
+	return module.providers.find((provider) => provider.identifier === source) as FuzzySearchMetadataProvider<FuzzySource> | undefined;
 }
 
-function draftFrom(data?: MetadataData): Draft {
+const steamImageStyle = {
+	width: 120,
+	height: 45,
+	flexShrink: 0,
+	objectFit: "cover",
+	borderRadius: 4
+} as const;
+
+function draftFrom(data?: MetadataData, steamAppId?: number): Draft {
 	return {
 		description: data?.description ?? "",
 		developers: namesToText(data?.developers),
@@ -89,7 +103,8 @@ function draftFrom(data?: MetadataData): Draft {
 		releaseDate: dateToText(data?.release_date),
 		rating: data?.rating != null && data.rating > 0 ? String(Math.round(data.rating)) : "",
 		categories: (data?.store_categories ?? []).filter((c): c is StoreCategory =>
-			typeof c === "number" && EDITABLE_CATEGORY_IDS.has(c))
+			typeof c === "number" && EDITABLE_CATEGORY_IDS.has(c)),
+		steamAppId: steamAppId ? String(steamAppId) : ""
 	};
 }
 
@@ -164,8 +179,20 @@ export const MetadataEditor: FC = () => {
 	const name = overview?.display_name ?? "";
 
 	const GamepadTextArea = useMemo(() => getGamepadTextArea(), []);
-	const [saved, setSaved] = useState<Draft>(() => draftFrom(module.fetchData(appId)));
+	const [saved, setSaved] = useState<Draft>(() => draftFrom(module.fetchData(appId), module.getSteamMatch(appId)));
 	const [draft, setDraft] = useState<Draft>(saved);
+
+	// Without a MetaDeck Steam match yet, start from the one Decky Metadata has (it drives its community, news...)
+	useEffect(() => {
+		if (module.getSteamMatch(appId))
+			return;
+		void getDeckyMetadataSteamMatch(appId).then((steamAppId) => {
+			if (!steamAppId)
+				return;
+			setSaved((current) => ({ ...current, steamAppId: String(steamAppId) }));
+			setDraft((current) => current.steamAppId ? current : { ...current, steamAppId: String(steamAppId) });
+		});
+	}, [appId]);
 	const [manual, setManual] = useState(() => module.getManualOverride(appId));
 	const [saving, setSaving] = useState(false);
 
@@ -176,7 +203,7 @@ export const MetadataEditor: FC = () => {
 
 	const update = (changes: Partial<Draft>) => setDraft((current) => ({ ...current, ...changes }));
 	const reload = () => {
-		const current = draftFrom(module.fetchData(appId));
+		const current = draftFrom(module.fetchData(appId), module.getSteamMatch(appId));
 		setSaved(current);
 		setDraft(current);
 		setManual(module.getManualOverride(appId));
@@ -190,9 +217,22 @@ export const MetadataEditor: FC = () => {
 			toasterToast(error, module);
 			return;
 		}
+		const steamChanged = changes.includes("steamAppId");
+		const steamAppId = parseSteamAppId(draft.steamAppId);
+		if (steamChanged && draft.steamAppId.trim() && !steamAppId){
+			toasterToast(t("editorInvalidSteamAppId"), module);
+			return;
+		}
 		setSaving(true);
 		try{
-			await module.setManualOverride(appId, override);
+			if (changes.some((change) => change !== "steamAppId"))
+				await module.setManualOverride(appId, override);
+			if (steamChanged){
+				await module.setSteamMatch(appId, steamAppId);
+				// Decky Metadata's community, news, layouts and trailers follow the same match
+				await setDeckyMetadataSteamMatch(appId, steamAppId, name).catch((e) =>
+					module.logger.error("Decky Metadata Steam match update failed", e));
+			}
 			reload();
 			toasterToast(t("editorSaved"), module);
 		}
@@ -313,6 +353,7 @@ export const MetadataEditor: FC = () => {
 	const copyToFields = (details: MetadataData) => {
 		const values = draftFrom(details);
 		setDraft((current) => ({
+			...current,
 			description: values.description || current.description,
 			developers: values.developers || current.developers,
 			publishers: values.publishers || current.publishers,
@@ -324,14 +365,15 @@ export const MetadataEditor: FC = () => {
 	};
 
 	// Makes the result this app's provider data (MetaDeck providers only), as the override settings do
-	const applyAsSource = async (result: SearchResult) => {
-		if (result.source === "ign")
-			return;
+	const applyAsSource = (result: SearchResult) =>
+		result.source === "ign" ? Promise.resolve() : setProviderSource(result.source, result.id);
+
+	const setProviderSource = async (source: FuzzySource, id: ID) => {
 		setBusy(true);
 		try{
-			await fuzzyProvider(module, result.source)?.setOverride(appId, result.id);
+			await fuzzyProvider(module, source)?.setOverride(appId, id);
 			const oldOverrides = module.providerOverrides;
-			const newOverrides = { ...oldOverrides, [appId]: result.source } as typeof oldOverrides;
+			const newOverrides = { ...oldOverrides, [appId]: source } as typeof oldOverrides;
 			module.providerOverrides = newOverrides;
 			await module.onOverridesChange(oldOverrides, newOverrides);
 			await module.fetchDataAsync(appId);
@@ -347,6 +389,65 @@ export const MetadataEditor: FC = () => {
 			setBusy(false);
 		}
 	};
+
+	// Find a Steam match
+	const [steamQuery, setSteamQuery] = useState(name);
+	const [steamCandidates, setSteamCandidates] = useState<SteamMatchCandidate[] | undefined>(undefined);
+	const [steamSelected, setSteamSelected] = useState<{ candidate: SteamMatchCandidate; preview?: SteamMatchPreview } | undefined>(undefined);
+
+	const searchSteam = async () => {
+		setBusy(true);
+		setSteamSelected(undefined);
+		try{
+			setSteamCandidates(await searchSteamStore(steamQuery));
+		}
+		catch (e: any){
+			module.logger.error("Steam search failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+			setSteamCandidates([]);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const selectSteam = async (candidate: SteamMatchCandidate) => {
+		setBusy(true);
+		setSteamSelected({ candidate });
+		try{
+			setSteamSelected({ candidate, preview: await getSteamMatchPreview(candidate.appid) });
+		}
+		catch (e: any){
+			module.logger.error("Steam preview failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const copySteamDetails = async (steamAppId: number) => {
+		setBusy(true);
+		try{
+			const steam = fuzzyProvider(module, "steam") as unknown as SteamMetadataProvider | undefined;
+			const details = await steam?.getAppMetadata(steamAppId);
+			if (details)
+				copyToFields(details);
+		}
+		catch (e: any){
+			module.logger.error("Steam details failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const steamAppIdLabel = (steamAppId: number) => [
+		`${t("editorSteamAppId")}: ${steamAppId}`,
+		String(steamAppId) === saved.steamAppId.trim() ? t("editorSteamCurrent") : undefined,
+		String(steamAppId) === draft.steamAppId.trim() && draft.steamAppId.trim() !== saved.steamAppId.trim() ? t("editorSteamSelected") : undefined
+	].filter((part) => part).join(" · ");
 
 	// A field of the Source section, marked when it has manual edits
 	const field = (key: Parameters<typeof t>[0], edited: boolean, children: ReactNode) =>
@@ -396,6 +497,67 @@ export const MetadataEditor: FC = () => {
 								{t("editorRestore")}
 							</DialogButton>
 						</div>
+
+						<PanelSection title={t("editorSteamMatch")}>
+							<PanelSectionRow>
+								<div style={compactTextStyle}>{t("editorSteamMatchHelp")}</div>
+							</PanelSectionRow>
+							<PanelSectionRow>
+								<div style={searchRowStyle}>
+									<TextField value={steamQuery} onChange={(e) => setSteamQuery(e.target.value)}/>
+									<DialogButton style={searchButtonStyle} onClick={searchSteam} disabled={busy || !steamQuery.trim()}>
+										{busy ? t("editorSearching") : t("editorSteamSearch")}
+									</DialogButton>
+								</div>
+							</PanelSectionRow>
+							{steamCandidates && !steamCandidates.length &&
+								<PanelSectionRow>
+									<div style={compactTextStyle}>{t("editorSteamNoResults")}</div>
+								</PanelSectionRow>}
+							{steamCandidates?.map((candidate) =>
+								<PanelSectionRow key={candidate.appid}>
+									<DialogButton
+										className={`${editorFocusTargetClassName} metadeck-editor__result`}
+										style={{ ...resultButtonStyle, flexDirection: "row", alignItems: "center", gap: 12 }}
+										onClick={() => selectSteam(candidate)}
+										disabled={busy}>
+										{candidate.image && <img src={candidate.image} style={steamImageStyle}/>}
+										<span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+											<span>{candidate.title}</span>
+											<span style={resultDetailStyle}>{steamAppIdLabel(candidate.appid)}</span>
+										</span>
+									</DialogButton>
+									{steamSelected?.candidate.appid === candidate.appid && steamSelected.preview &&
+										<div style={{ ...previewStyle, marginTop: 8 }}>
+											{steamSelected.preview.image &&
+												<img src={steamSelected.preview.image} style={{ width: "100%", maxWidth: 460, borderRadius: 4 }}/>}
+											<div style={{ fontWeight: 700 }}>{steamSelected.preview.title}</div>
+											<div style={compactTextStyle}>
+												{[steamSelected.preview.developers.join(", "), steamSelected.preview.release].filter((part) => part).join(" · ")}
+											</div>
+											{steamSelected.preview.type && steamSelected.preview.type !== "game" &&
+												<div style={{ color: "#f59e0b" }}>{t("editorSteamType").replace("{type}", steamSelected.preview.type)}</div>}
+											<div style={compactTextStyle}>{snippet(steamSelected.preview.description, 300)}</div>
+											<div style={{ ...previewActionsStyle, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+												<DialogButton
+													onClick={() => {
+														update({ steamAppId: String(candidate.appid) });
+														toasterToast(t("editorSteamMatchSet"), module);
+													}}
+													disabled={busy}>
+													{t("editorSteamUseMatch")}
+												</DialogButton>
+												<DialogButton onClick={() => copySteamDetails(candidate.appid)} disabled={busy}>{t("editorCopyToFields")}</DialogButton>
+												<DialogButton onClick={() => setProviderSource("steam", candidate.appid)} disabled={busy}>{t("editorUseAsSource")}</DialogButton>
+											</div>
+										</div>}
+								</PanelSectionRow>
+							)}
+							<PanelSectionRow>
+								{field("editorSteamAppId", false,
+									<TextField value={draft.steamAppId} description={t("editorSteamAppIdDesc")} onChange={(e) => update({ steamAppId: e.target.value })}/>)}
+							</PanelSectionRow>
+						</PanelSection>
 
 						<PanelSection title={t("editorSearchSection")}>
 							<PanelSectionRow>

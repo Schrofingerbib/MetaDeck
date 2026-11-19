@@ -291,5 +291,17 @@
 	"editorDiscardTitle": "Discard changes?",
 	"editorDiscardBody": "There are unsaved changes, they will be lost.",
 	"editorDiscard": "Discard",
-	"editorSearchSection": "Search Metadata"
+	"editorSearchSection": "Search Metadata",
+	"editorSteamMatch": "Find a Steam Match",
+	"editorSteamMatchHelp": "Search Steam and select a result to check it. \"Use This Steam Match\" links the game to that Steam app (community, news, controller layouts...), press Save to keep it. Browsing doesn't change anything.",
+	"editorSteamSearch": "Search Steam",
+	"editorSteamNoResults": "No Steam matches found, try another name or use the Steam App ID field below",
+	"editorSteamAppId": "Steam App ID",
+	"editorSteamAppIdDesc": "Steam App ID, or a Store, Community or SteamDB URL. Empty for no match",
+	"editorSteamCurrent": "current match",
+	"editorSteamSelected": "selected",
+	"editorSteamType": "Steam type: {type}, check that this is the game or edition you want",
+	"editorSteamUseMatch": "Use This Steam Match",
+	"editorSteamMatchSet": "Steam match selected, press Save to keep it",
+	"editorInvalidSteamAppId": "Invalid Steam App ID"
 }
