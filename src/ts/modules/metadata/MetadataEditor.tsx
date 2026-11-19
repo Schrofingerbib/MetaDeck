@@ -168,7 +168,15 @@ export const MetadataEditor: FC = () => {
 			}
 			else{
 				const found = await fuzzyProvider(module, searchSource)?.searchByQuery(query) ?? [];
-				setResults(found.map((entry) => ({ source: searchSource, id: entry.id, title: entry.title, snippet: snippet(entry.description), entry })));
+				// Several results can share the same title (versions, platforms): show the year, or the ID
+				setResults(found.map((entry) => ({
+					source: searchSource,
+					id: entry.id,
+					title: entry.title,
+					snippet: [dateToText(entry.release_date).slice(0, 4) || `ID ${entry.id}`, snippet(entry.description)]
+						.filter((part) => part).join(" · "),
+					entry
+				})));
 			}
 		}
 		catch (e: any){
