@@ -293,7 +293,7 @@
 	"editorDiscard": "Discard",
 	"editorSearchSection": "Search Metadata",
 	"editorSteamMatch": "Find a Steam Match",
-	"editorSteamMatchHelp": "Search Steam and select a result to check it. \"Use This Steam Match\" links the game to that Steam app (community, news, controller layouts...), press Save to keep it. Browsing doesn't change anything.",
+	"editorSteamMatchHelp": "Search Steam and select a result to check it. \"Use This Steam Match\" makes that Steam app the source of the game's metadata and links its community, news, controller layouts... Fields below can still be edited by hand. Press Save to apply. Browsing doesn't change anything.",
 	"editorSteamSearch": "Search Steam",
 	"editorSteamNoResults": "No Steam matches found, try another name or use the Steam App ID field below",
 	"editorSteamAppId": "Steam App ID",
@@ -302,6 +302,6 @@
 	"editorSteamSelected": "selected",
 	"editorSteamType": "Steam type: {type}, check that this is the game or edition you want",
 	"editorSteamUseMatch": "Use This Steam Match",
-	"editorSteamMatchSet": "Steam match selected, press Save to keep it",
+	"editorSteamMatchSet": "Steam match selected, press Save to apply it",
 	"editorInvalidSteamAppId": "Invalid Steam App ID"
 }

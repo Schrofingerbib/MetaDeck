@@ -117,46 +117,60 @@ function changedFields(draft: Draft, saved: Draft): (keyof Draft)[] {
 			draft[key].trim() !== saved[key].trim());
 }
 
-/** Validates the draft and keeps only the fields that differ from the provider data */
-function overrideFrom(draft: Draft, provider?: MetadataData): { override?: MetadataManualOverride; error?: string } {
-	const override: MetadataManualOverride = {};
+/**
+ * Manual edits to save: the existing ones, updated with the fields changed on the page.
+ * A changed field equal to the provider data needs no manual edit.
+ */
+function overrideFrom(draft: Draft, saved: Draft, provider: MetadataData | undefined, existing: MetadataManualOverride | undefined):
+	{ override?: MetadataManualOverride; error?: string } {
+
+	const override: MetadataManualOverride = { ...(existing ?? {}) };
 	const base = draftFrom(provider);
+	const changed = changedFields(draft, saved);
+	const set = <K extends keyof MetadataManualOverride>(key: K, value: MetadataManualOverride[K], sameAsProvider: boolean) => {
+		if (sameAsProvider)
+			delete override[key];
+		else
+			override[key] = value;
+	};
 
-	if (draft.description.trim() !== base.description.trim())
-		override.description = draft.description.trim();
+	if (changed.includes("description"))
+		set("description", draft.description.trim(), draft.description.trim() === base.description.trim());
 
-	const developers = textToNames(draft.developers);
-	if (!sameList(developers, textToNames(base.developers)))
-		override.developers = developers.map((name) => ({ name, url: "" }));
+	if (changed.includes("developers")){
+		const developers = textToNames(draft.developers);
+		set("developers", developers.map((name) => ({ name, url: "" })), sameList(developers, textToNames(base.developers)));
+	}
 
-	const publishers = textToNames(draft.publishers);
-	if (!sameList(publishers, textToNames(base.publishers)))
-		override.publishers = publishers.map((name) => ({ name, url: "" }));
+	if (changed.includes("publishers")){
+		const publishers = textToNames(draft.publishers);
+		set("publishers", publishers.map((name) => ({ name, url: "" })), sameList(publishers, textToNames(base.publishers)));
+	}
 
-	const date = draft.releaseDate.trim();
-	if (date !== base.releaseDate){
+	if (changed.includes("releaseDate")){
+		const date = draft.releaseDate.trim();
 		if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date))
 			return { error: t("editorInvalidDate") };
 		const time = date ? Date.UTC(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10)) : 0;
 		if (date && Number.isNaN(time))
 			return { error: t("editorInvalidDate") };
 		// 0 clears the provider's date
-		override.release_date = Math.floor(time / 1000);
+		set("release_date", Math.floor(time / 1000), date === base.releaseDate);
 	}
 
-	const rating = draft.rating.trim();
-	if (rating !== base.rating){
+	if (changed.includes("rating")){
+		const rating = draft.rating.trim();
 		const value = rating ? Number(rating) : 0;
 		if (!Number.isFinite(value) || value < 0 || value > 100)
 			return { error: t("editorInvalidRating") };
 		// 0 clears the provider's rating
-		override.rating = value;
+		set("rating", value, rating === base.rating);
 	}
 
-	if (!sameList(draft.categories, base.categories)){
+	if (changed.includes("categories")){
 		// Keep the categories that can't be edited here (shortcut-derived, custom...)
 		const kept = (provider?.store_categories ?? []).filter((c) => typeof c !== "number" || !EDITABLE_CATEGORY_IDS.has(c));
-		override.store_categories = [...kept, ...draft.categories];
+		set("store_categories", [...kept, ...draft.categories], sameList(draft.categories, base.categories));
 	}
 
 	return { override };
@@ -212,7 +226,7 @@ export const MetadataEditor: FC = () => {
 	const save = async () => {
 		if (!changes.length || saving)
 			return;
-		const { override, error } = overrideFrom(draft, provider);
+		const { override, error } = overrideFrom(draft, saved, provider, manual);
 		if (error){
 			toasterToast(error, module);
 			return;
@@ -232,6 +246,9 @@ export const MetadataEditor: FC = () => {
 				// Decky Metadata's community, news, layouts and trailers follow the same match
 				await setDeckyMetadataSteamMatch(appId, steamAppId, name).catch((e) =>
 					module.logger.error("Decky Metadata Steam match update failed", e));
+				// The Steam match becomes the source of the game's metadata (manual edits stay on top);
+				// removing it goes back to the automatic provider if Steam was the source
+				await switchSource(steamAppId ? "steam" : undefined, steamAppId, "steam");
 			}
 			reload();
 			toasterToast(t("editorSaved"), module);
@@ -368,16 +385,33 @@ export const MetadataEditor: FC = () => {
 	const applyAsSource = (result: SearchResult) =>
 		result.source === "ign" ? Promise.resolve() : setProviderSource(result.source, result.id);
 
+	/**
+	 * Makes a provider result the provider data of this app, as the override settings do.
+	 * Without a source, goes back to the automatic provider, only when the current source is `whenCurrent`.
+	 */
+	const switchSource = async (source: FuzzySource | undefined, id?: ID, whenCurrent?: FuzzySource) => {
+		const oldOverrides = module.providerOverrides;
+		const newOverrides: Record<number, string> = { ...oldOverrides };
+		if (source){
+			await fuzzyProvider(module, source)?.setOverride(appId, id);
+			newOverrides[appId] = source;
+		}
+		else{
+			if (!whenCurrent || newOverrides[appId] !== whenCurrent)
+				return;
+			await fuzzyProvider(module, whenCurrent)?.setOverride(appId, undefined);
+			delete newOverrides[appId];
+		}
+		module.providerOverrides = newOverrides as typeof oldOverrides;
+		await module.onOverridesChange(oldOverrides, newOverrides as typeof oldOverrides);
+		await module.fetchDataAsync(appId);
+		await module.refreshApp(appId);
+	};
+
 	const setProviderSource = async (source: FuzzySource, id: ID) => {
 		setBusy(true);
 		try{
-			await fuzzyProvider(module, source)?.setOverride(appId, id);
-			const oldOverrides = module.providerOverrides;
-			const newOverrides = { ...oldOverrides, [appId]: source } as typeof oldOverrides;
-			module.providerOverrides = newOverrides;
-			await module.onOverridesChange(oldOverrides, newOverrides);
-			await module.fetchDataAsync(appId);
-			await module.refreshApp(appId);
+			await switchSource(source, id);
 			reload();
 			toasterToast(t("editorSourceSet"), module);
 		}
@@ -538,7 +572,7 @@ export const MetadataEditor: FC = () => {
 											{steamSelected.preview.type && steamSelected.preview.type !== "game" &&
 												<div style={{ color: "#f59e0b" }}>{t("editorSteamType").replace("{type}", steamSelected.preview.type)}</div>}
 											<div style={compactTextStyle}>{snippet(steamSelected.preview.description, 300)}</div>
-											<div style={{ ...previewActionsStyle, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+											<div style={previewActionsStyle}>
 												<DialogButton
 													onClick={() => {
 														update({ steamAppId: String(candidate.appid) });
@@ -548,7 +582,6 @@ export const MetadataEditor: FC = () => {
 													{t("editorSteamUseMatch")}
 												</DialogButton>
 												<DialogButton onClick={() => copySteamDetails(candidate.appid)} disabled={busy}>{t("editorCopyToFields")}</DialogButton>
-												<DialogButton onClick={() => setProviderSource("steam", candidate.appid)} disabled={busy}>{t("editorUseAsSource")}</DialogButton>
 											</div>
 										</div>}
 								</PanelSectionRow>
