@@ -27,6 +27,49 @@ export class LizardByteGameDBMetadataProvider extends FuzzySearchMetadataProvide
 
 	// DEV: maybe cache buckets?
 	private _missingBucketsCache = new Set<string>();
+
+	// Search results only carry a name: year and platforms come from each game file (cached for the session)
+	private platformNames?: Promise<Record<string, string>>;
+	private resultSummaries = new Map<string, Promise<Pick<MetadataData, "release_date" | "platforms">>>();
+
+	private loadPlatformNames(): Promise<Record<string, string>>{
+		this.platformNames ??= (async () => {
+			const response = await fetchNoCorsLegacyTimeout("https://app.lizardbyte.dev/GameDB/platforms/all.json");
+			if (!response.ok)
+				throw new Error(`${response.status}`);
+			const platforms: Record<string, { name?: string; abbreviation?: string }> = JSON.parse(await response.text());
+			return Object.fromEntries(Object.entries(platforms).map(([id, p]) => [id, p.abbreviation || p.name || id]));
+		})().catch((e) => {
+			this.platformNames = undefined; // Retry next time
+			throw e;
+		});
+		return this.platformNames;
+	}
+
+	/** Release year and platforms of a search result, to tell apart results with the same title */
+	public getResultSummary(id: string | number): Promise<Pick<MetadataData, "release_date" | "platforms">>{
+		const key = String(id);
+		let summary = this.resultSummaries.get(key);
+		if (!summary){
+			summary = (async () => {
+				const response = await fetchNoCorsLegacyTimeout(`https://app.lizardbyte.dev/GameDB/games/${key}.json`);
+				if (!response.ok)
+					throw new Error(`${response.status}`);
+				const game: Game = JSON.parse(await response.text());
+				const names = await this.loadPlatformNames().catch(() => ({} as Record<string, string>));
+				const dates = (game.release_dates ?? []).map((d) => (d as ReleaseDate).date).filter((d): d is number => typeof d === "number");
+				return {
+					release_date: dates.length ? Math.min(...dates) : undefined,
+					platforms: (game.platforms ?? []).map((p) => names[String(typeof p === "number" ? p : p.id)] ?? String(typeof p === "number" ? p : p.id))
+				};
+			})().catch((e) => {
+				this.resultSummaries.delete(key);
+				throw e;
+			});
+			this.resultSummaries.set(key, summary);
+		}
+		return summary;
+	}
 	
 	private _steamProvider?: SteamMetadataProvider;
 	get steamProvider(): SteamMetadataProvider{
