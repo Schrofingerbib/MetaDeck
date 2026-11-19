@@ -160,6 +160,12 @@ export function sameTitle(a: string, b: string): boolean{
 	return x.length > 0 && x.length === y.length && x.every((word, i) => word === y[i]);
 }
 
+/** Same numbers in both titles (Roman numerals too): "Resident Evil" is not "Resident Evil 3" */
+export function sameNumbers(a: string, b: string): boolean{
+	const numbers = (text: string) => titleWords(text).filter((word) => /^[0-9]+$/.test(word)).map(Number).sort().join(" ");
+	return numbers(a) === numbers(b);
+}
+
 /** The query and its abbreviation expansions, as word lists */
 function queryVariants(query: string): string[][]{
 	const words = titleWords(query);

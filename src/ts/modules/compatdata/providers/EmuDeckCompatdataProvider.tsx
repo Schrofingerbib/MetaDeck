@@ -11,7 +11,7 @@ import { FuzzySearchCompatdataProvider, type FuzzySearchCompatdataProviderCache,
 import Logger from "../../../logger";
 import { FaGamepad } from "react-icons/fa";
 import { distance } from "fastest-levenshtein";
-import { rankTitles, sameTitle } from "../../../titleSearch";
+import { rankTitles, sameNumbers, sameTitle } from "../../../titleSearch";
 
 // RetroDECK / ES-DE system folders -> EmuDeck list consoles
 const SYSTEM_CONSOLES: Record<string, string[]> = {
@@ -56,10 +56,13 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 	readonly sameTitleOnly = new Set<number>();
 
 	protected override async acceptAutomaticMatch(appId: number, game: CompatdataData): Promise<boolean>{
-		if (!this.sameTitleOnly.has(appId))
-			return true;
 		const details = await getAppDetails(appId);
-		return !!details && sameTitle(details.strDisplayName, game.title);
+		if (!details)
+			return false;
+		if (this.sameTitleOnly.has(appId))
+			return sameTitle(details.strDisplayName, game.title);
+		// A close title with other numbers is another game of the series ("Resident Evil 3" for "Resident Evil")
+		return sameNumbers(details.strDisplayName, game.title);
 	}
 
 	// Every Steam Deck report (several per game: consoles, emulators, users) and the titles to search
