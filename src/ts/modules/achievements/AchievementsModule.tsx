@@ -1208,7 +1208,29 @@ export class AchievementsModule extends Module<"achievements", AchievementsProvi
 		];
 	}
 
-	override async fetchDataAsync(appId: number): Promise<AchievementsData | undefined> {
+	private inFlightFetches = new Map<number, Promise<AchievementsData | undefined>>();
+
+	override fetchDataAsync(appId: number): Promise<AchievementsData | undefined> {
+		// Opening a game page fires several Steam queries (schema, progress, rarity...) that all end up here:
+		// share one fetch per app instead of hitting the provider (and its rate limit) once per query
+		let pending = this.inFlightFetches.get(appId);
+		if (!pending) {
+			const hadData = this.hasData(appId);
+			pending = this.fetchAndDecorateData(appId)
+				.then((data) => {
+					// The data arrived only now (startup refresh, provider rate limited...): Steam may already
+					// have cached an empty answer for this app, refetch it so achievements and the row show up
+					if (!hadData && data?.groups?.some((group) => group.achievements?.length))
+						void this.queryCache?.invalidateQueries({ queryKey: ["achievements", appId] });
+					return data;
+				})
+				.finally(() => this.inFlightFetches.delete(appId));
+			this.inFlightFetches.set(appId, pending);
+		}
+		return pending;
+	}
+
+	private async fetchAndDecorateData(appId: number): Promise<AchievementsData | undefined> {
 		let data = await super.fetchDataAsync(appId);
 
 		if(data?.dlcs?.length && this.dlcRibbon){
