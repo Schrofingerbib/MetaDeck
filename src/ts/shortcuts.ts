@@ -2,7 +2,8 @@ import {CustomStoreCategory, StoreCategory} from "./Interfaces";
 import {call} from "@decky/api";
 import type { SteamAppDetails } from "./SteamTypes";
 
-export const romRegex = /(\/([^\/"])+)+(?!\.AppImage)(\.zip|\.7z|\.iso|\.bin|\.chd|\.cue|\.img|\.a26|\.lnx|\.ngp|\.ngc|\.3dsx|\.3ds|\.app|\.axf|\.cci|\.cxi|\.elf|\.n64|\.ndd|\.u1|\.v64|\.z64|\.nds|\.dmg|\.gbc|\.gba|\.gb|\.ciso|\.dol|\.gcm|\.gcz|\.nkit\.iso|\.rvz|\.wad|\.wia|\.wbfs|\.nes|\.fds|\.unif|\.unf|\.json|\.kp|\.nca|\.nro|\.nso|\.nsp|\.xci|\.rpx|\.wud|\.wux|\.wua|\.32x|\.cdi|\.gdi|\.m3u|\.gg|\.gen|\.md|\.smd|\.sms|\.ecm|\.mds|\.pbp|\.dump|\.gz|\.mdf|\.mrg|\.prx|\.bs|\.fig|\.sfc|\.smc|\.swx|\.pc2|\.wsc|\.ws)/i;
+// The extension must end the path: "com.quiverlauncher.app/apps/..." (native PC ports) is not a 3DS ".app" ROM
+export const romRegex = /(\/([^\/"])+)+(?!\.AppImage)(\.zip|\.7z|\.iso|\.bin|\.chd|\.cue|\.img|\.a26|\.lnx|\.ngp|\.ngc|\.3dsx|\.3ds|\.app|\.axf|\.cci|\.cxi|\.elf|\.n64|\.ndd|\.u1|\.v64|\.z64|\.nds|\.dmg|\.gbc|\.gba|\.gb|\.ciso|\.dol|\.gcm|\.gcz|\.nkit\.iso|\.rvz|\.wad|\.wia|\.wbfs|\.nes|\.fds|\.unif|\.unf|\.json|\.kp|\.nca|\.nro|\.nso|\.nsp|\.xci|\.rpx|\.wud|\.wux|\.wua|\.32x|\.cdi|\.gdi|\.m3u|\.gg|\.gen|\.md|\.smd|\.sms|\.ecm|\.mds|\.pbp|\.dump|\.gz|\.mdf|\.mrg|\.prx|\.bs|\.fig|\.sfc|\.smc|\.swx|\.pc2|\.wsc|\.ws)(?=["'\s]|$)/i;
 
 export const scriptRegex = /(\/([^\/"])+)+(\.sh)/;
 
