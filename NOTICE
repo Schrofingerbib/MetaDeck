@@ -1,0 +1,23 @@
+MetaDeck
+========
+
+MetaDeck is distributed under the GNU General Public License v3.0 (see LICENSE).
+
+This fork also includes code ported from other GPL-licensed Decky plugins.
+Each ported file keeps a header naming its origin.
+
+Decky Metadata
+--------------
+Copyright (c) beallio
+https://github.com/beallio/Decky-Metadata
+Licensed under the GNU General Public License v3.0 or later (used here under
+GPL-3.0).
+
+Ported components:
+
+- src/ts/modules/achievements/MiniAchievements.ts
+  From src/steam/miniAchievements.ts (v0.6.4). It derives from the
+  achievement-bar work in Decky UI Restored by beallio
+  (https://github.com/beallio/Decky-UI-Restored), GPL-3.0-or-later. Supplies
+  the missing onSeek callback so Steam's own mini achievements row renders on
+  the Gaming Mode game page (ValveSoftware/steam-for-linux#13540).

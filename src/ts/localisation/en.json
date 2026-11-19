@@ -5,6 +5,8 @@
 	"achievementsSettingsCategoryDesc": "Injects Achievements category into Steam's store categories",
 	"achievementsSettingsDlcRibbon": "Add DLC Ribbon",
 	"achievementsSettingsDlcRibbonDesc": "Adds the purple DLC ribbon to the top left corner of the image of the achievement sets",
+	"achievementsSettingsMiniAchievements": "Show Achievements Beside Play Time",
+	"achievementsSettingsMiniAchievementsDesc": "Shows Steam's achievement progress row next to Play Time on the game page (Steam games and games with MetaDeck achievements)",
 	"achievementsSettingsOverlay": "Show in Overlay",
 	"achievementsSettingsOverlayDesc": "Shows achievements in the Steam overlay in-game",
 	"apiKey": "API Key",
