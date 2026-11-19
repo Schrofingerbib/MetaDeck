@@ -30,7 +30,15 @@ export interface RetroAchievementsAchievementsProviderCache extends ProviderCach
 	game_info: Record<ID, GetGameInfoAndUserProgressResponse & {
 		retrieved: number; // Date.getTime()
 	}>;
+	// Parent game ID -> subset IDs, built from every console's game list (dozens of requests),
+	// so it's kept between sessions and rebuilt in background when it expires
+	parent_subsets?: {
+		map: Record<ID, ID[]>;
+		retrieved: number; // Date.getTime()
+	};
 }
+
+const PARENT_SUBSETS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class RetroAchievementsAchievementsProvider extends AchievementsProvider<"ra">{
 	identifier = "ra" as const;
@@ -176,6 +184,30 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 	}
 
 	override async mount(): Promise<void> {
+		const cached = this.cache.parent_subsets;
+		if(cached?.map){
+			this.parentSubsets = cached.map;
+			this.logger.debug("Parent/subsets (cached)", this.parentSubsets);
+
+			// Rebuilding takes dozens of requests: keep using the cached map meanwhile instead of delaying the mount
+			if(new Date().getTime() - cached.retrieved >= PARENT_SUBSETS_TTL_MS)
+				void this.refreshParentSubsets();
+			return;
+		}
+
+		// Nothing cached yet: subsets can't be grouped without it
+		await this.refreshParentSubsets();
+	}
+
+	private refreshingParentSubsets?: Promise<void>;
+
+	private refreshParentSubsets(): Promise<void> {
+		this.refreshingParentSubsets ??= this.buildParentSubsets()
+			.finally(() => this.refreshingParentSubsets = undefined);
+		return this.refreshingParentSubsets;
+	}
+
+	private async buildParentSubsets(): Promise<void> {
 		let init = false;
 		try{
 			// Retrieve consoles list
@@ -191,14 +223,14 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 			if(!consoles.length)
 				return;
 
-			// For each console retrieve all games
+			// For each console retrieve all games (titles only, hashes are not needed here)
+			const parentSubsets: Record<ID, ID[]> = {};
 			for(let console of consoles){
 				let response = await this.raRequest(
 				`https://retroachievements.org/API/API_GetGameList.php?` + new URLSearchParams({
 					y: this.apiKey,
 					i: console.ID.toString(),
 					f: '1',
-					h: '1',
 					c: '0' // Retrieve all
 				}).toString());
 				if(!response.ok)
@@ -213,13 +245,23 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 					if(!matchingGames.length)
 						continue;
 
-					this.parentSubsets[game.ID] = matchingGames.map(g => g.ID);
+					parentSubsets[game.ID] = matchingGames.map(g => g.ID);
 				}
 			}
 
+			// Only replace the map once complete, a partial one would hide subsets
+			this.parentSubsets = parentSubsets;
+			this.cache.parent_subsets = {
+				map: parentSubsets,
+				retrieved: new Date().getTime()
+			};
+			void this.saveCache();
 			this.logger.debug("Parent/subsets", this.parentSubsets);
-			
+
 			init = true;
+		}
+		catch (e: any){
+			this.logger.error("Parent/subsets retrieval failed", e);
 		}
 		finally{
 			if(!init)
