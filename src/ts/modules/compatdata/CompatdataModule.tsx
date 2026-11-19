@@ -15,6 +15,7 @@ import {
 import {afterPatch, DialogControlsSection, Field, Patch, Toggle} from "@decky/ui";
 import {SteamAppDetails, SteamAppOverview } from "../../SteamTypes";
 import { PCSX2CompatdataProvider, type PCSX2CompatdataProviderCache, type PCSX2CompatdataProviderConfig } from "./providers/PCSX2CompatdataProvider";
+import { SteamMatchCompatdataProvider, type SteamMatchCompatdataProviderCache, type SteamMatchCompatdataProviderConfig } from "./providers/SteamMatchCompatdataProvider";
 import { RPCS3CompatdataProvider, type RPCS3CompatdataProviderCache, type RPCS3CompatdataProviderConfig } from "./providers/RPCS3CompatdataProvider";
 import { XeniaCompatdataProvider, type XeniaCCompatdataProviderCache, type XeniaCompatdataProviderConfig } from "./providers/XeniaCompatdataProvider";
 import { DolphinCompatdataProvider, type DolphinCompatdataProviderCache, type DolphinCompatdataProviderConfig } from "./providers/DolphinCompatdataProvider";
@@ -36,6 +37,7 @@ export interface CompatdataCache extends ModuleCache<CompatdataProviderCaches, C
 }
 
 export interface CompatdataProviderConfigs{
+	steam_match: SteamMatchCompatdataProviderConfig;
 	emudeck: EmuDeckCompatdataProviderConfig;
 	pcsx2: PCSX2CompatdataProviderConfig;
 	rpcs3: RPCS3CompatdataProviderConfig;
@@ -45,6 +47,7 @@ export interface CompatdataProviderConfigs{
 }
 
 export interface CompatdataProviderCaches{
+	steam_match: SteamMatchCompatdataProviderCache;
 	emudeck: EmuDeckCompatdataProviderCache;
 	pcsx2: PCSX2CompatdataProviderCache;
 	rpcs3: RPCS3CompatdataProviderCache;
@@ -61,6 +64,8 @@ export class CompatdataModule extends Module<"compatdata", CompatdataProvider<an
 	logger = new Logger(this.identifier);
 
 	providers: CompatdataProvider<any>[] = [
+		// First: a Steam match replaces the emulator compatibility (unless the app is excluded from it)
+		new SteamMatchCompatdataProvider(this),
 		new PCSX2CompatdataProvider(this),
 		new RPCS3CompatdataProvider(this),
 		new XeniaCompatdataProvider(this),

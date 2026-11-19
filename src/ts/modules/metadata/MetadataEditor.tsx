@@ -71,6 +71,7 @@ type Draft = {
 	rating: string; // 0-100, empty for none
 	categories: number[]; // Editable categories only
 	steamAppId: string; // Steam match: ID or URL, empty for none
+	steamCompat: boolean; // With a Steam match: its compatibility (Valve) instead of MetaDeck's
 };
 
 const namesToText = (people?: { name: string }[]) => (people ?? []).map((p) => p.name).join(", ");
@@ -95,7 +96,7 @@ const steamImageStyle = {
 	borderRadius: 4
 } as const;
 
-function draftFrom(data?: MetadataData, steamAppId?: number): Draft {
+function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true): Draft {
 	return {
 		description: data?.description ?? "",
 		developers: namesToText(data?.developers),
@@ -104,17 +105,24 @@ function draftFrom(data?: MetadataData, steamAppId?: number): Draft {
 		rating: data?.rating != null && data.rating > 0 ? String(Math.round(data.rating)) : "",
 		categories: (data?.store_categories ?? []).filter((c): c is StoreCategory =>
 			typeof c === "number" && EDITABLE_CATEGORY_IDS.has(c)),
-		steamAppId: steamAppId ? String(steamAppId) : ""
+		steamAppId: steamAppId ? String(steamAppId) : "",
+		steamCompat
 	};
 }
 
 /** Draft fields differing from another draft (unsaved changes) */
 function changedFields(draft: Draft, saved: Draft): (keyof Draft)[] {
-	return (Object.keys(draft) as (keyof Draft)[]).filter((key) => key === "categories" ?
-		!sameList(draft.categories, saved.categories) :
-		key === "developers" || key === "publishers" ?
-			!sameList(textToNames(draft[key]), textToNames(saved[key])) :
-			draft[key].trim() !== saved[key].trim());
+	return (Object.keys(draft) as (keyof Draft)[]).filter((key) => {
+		const value = draft[key];
+		const savedValue = saved[key];
+		if (Array.isArray(value) && Array.isArray(savedValue))
+			return !sameList(value, savedValue);
+		if (key === "developers" || key === "publishers")
+			return !sameList(textToNames(value as string), textToNames(savedValue as string));
+		if (typeof value === "string" && typeof savedValue === "string")
+			return value.trim() !== savedValue.trim();
+		return value !== savedValue;
+	});
 }
 
 /**
@@ -193,7 +201,11 @@ export const MetadataEditor: FC = () => {
 	const name = overview?.display_name ?? "";
 
 	const GamepadTextArea = useMemo(() => getGamepadTextArea(), []);
-	const [saved, setSaved] = useState<Draft>(() => draftFrom(module.fetchData(appId), module.getSteamMatch(appId)));
+	// The Steam match compatibility provider: apps excluded from it keep MetaDeck's compatibility
+	const steamCompatProvider = () => state.modules.compatdata.providers.find((provider) => provider.identifier === "steam_match");
+	const usesSteamCompat = () => !(steamCompatProvider()?.excludedAppsSelf ?? []).includes(appId);
+
+	const [saved, setSaved] = useState<Draft>(() => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat()));
 	const [draft, setDraft] = useState<Draft>(saved);
 
 	// Without a MetaDeck Steam match yet, start from the one Decky Metadata has (it drives its community, news...)
@@ -217,7 +229,7 @@ export const MetadataEditor: FC = () => {
 
 	const update = (changes: Partial<Draft>) => setDraft((current) => ({ ...current, ...changes }));
 	const reload = () => {
-		const current = draftFrom(module.fetchData(appId), module.getSteamMatch(appId));
+		const current = draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat());
 		setSaved(current);
 		setDraft(current);
 		setManual(module.getManualOverride(appId));
@@ -249,6 +261,21 @@ export const MetadataEditor: FC = () => {
 				// The Steam match becomes the source of the game's metadata (manual edits stay on top);
 				// removing it goes back to the automatic provider if Steam was the source
 				await switchSource(steamAppId ? "steam" : undefined, steamAppId, "steam");
+			}
+			const compatChanged = changes.includes("steamCompat");
+			if (compatChanged){
+				const provider = steamCompatProvider();
+				if (provider){
+					const excluded = provider.excludedAppsSelf.filter((id) => id !== appId);
+					provider.excludedAppsSelf = draft.steamCompat ? excluded : [...excluded, appId];
+				}
+			}
+			// The compatibility depends on the Steam match and on this choice
+			if (steamChanged || compatChanged){
+				const compat = state.modules.compatdata;
+				await compat.removeCache(appId);
+				await compat.fetchDataAsync(appId);
+				await compat.apply(appId);
 			}
 			reload();
 			toasterToast(t("editorSaved"), module);
@@ -589,6 +616,14 @@ export const MetadataEditor: FC = () => {
 							<PanelSectionRow>
 								{field("editorSteamAppId", false,
 									<TextField value={draft.steamAppId} description={t("editorSteamAppIdDesc")} onChange={(e) => update({ steamAppId: e.target.value })}/>)}
+							</PanelSectionRow>
+							<PanelSectionRow>
+								<ToggleField
+									label={t("editorSteamCompat")}
+									description={t("editorSteamCompatDesc")}
+									checked={draft.steamCompat}
+									disabled={!draft.steamAppId.trim()}
+									onChange={(checked) => update({ steamCompat: checked })}/>
 							</PanelSectionRow>
 						</PanelSection>
 
