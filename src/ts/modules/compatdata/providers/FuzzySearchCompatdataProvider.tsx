@@ -1,6 +1,6 @@
 import {ProviderCache, ProviderConfig} from "../../Provider";
 import {CompatdataProvider} from "../CompatdataProvider";
-import {CompatdataData, type EntryData, type IDDictionary} from "../../../Interfaces";
+import {CompatdataData, type EntryData, type ID, type IDDictionary} from "../../../Interfaces";
 import {useState} from "react";
 import {closestWithLimit, getAppDetails} from "../../../util";
 import { DialogControlsSection, Field, SliderField } from "@decky/ui";
@@ -60,6 +60,28 @@ export abstract class FuzzySearchCompatdataProvider<Identifier extends "dolphin"
 
 	protected abstract search(title: string): Promise<CompatdataData[]>;
 
+	/** Free-text search, for the "Change Metadata" page */
+	public searchByQuery(query: string): Promise<CompatdataData[]>{
+		return this.throttle(() => this.search(query));
+	}
+
+	/** Pins (or unpins, with undefined; 0 for no entry) a result ID for an app, like the ID override settings */
+	public async setOverride(appId: number, id: ID | undefined): Promise<void>{
+		const oldValue = this.overrides;
+		const newValue = { ...oldValue };
+		if (id === undefined)
+			delete newValue[appId];
+		else
+			newValue[appId] = id;
+		this.overrides = newValue;
+		await this.onOverridesChange(oldValue, newValue);
+	}
+
+	/** The entry with this ID, for pinned IDs a search by the app name does not return */
+	public getEntryById(_id: ID): CompatdataData | undefined{
+		return undefined;
+	}
+
 	// Used to retrieve initial data for all the results in search and more specific data here if needed
 	protected enrichCompatdataForGame(_appId: number, _game: CompatdataData): Promise<void>{
 		return Promise.resolve();
@@ -85,12 +107,11 @@ export abstract class FuzzySearchCompatdataProvider<Identifier extends "dolphin"
 		this.logger.debug("Searching", appId);
 
 		const results = await this.getAllCompatdataForGame(appId);
-		if (!results.length)
+		const data_id = this.overrides[appId];
+		if (!results.length && data_id === undefined)
 			return undefined;
 
 		this.logger.debug("Results", appId, results);
-
-		const data_id = this.overrides[appId];
 		this.logger.debug("Override", appId, data_id);
 
 		let games: CompatdataData[];
@@ -100,8 +121,13 @@ export abstract class FuzzySearchCompatdataProvider<Identifier extends "dolphin"
 			this.logger.debug("Results titles", appId, games[0]?.title ?? "", results.map(value => value.title));
 			this.logger.debug("Matching results", appId, games);
 		}
-		else
+		else{
 			games = results.filter(value => value.id === data_id);
+			// Pinned by hand to an entry of another title or console
+			const entry = games.length ? undefined : this.getEntryById(data_id);
+			if (entry)
+				games = [entry];
+		}
 
 		const game = games[0];
 		if (game)
