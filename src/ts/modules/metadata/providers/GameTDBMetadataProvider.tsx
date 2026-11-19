@@ -103,7 +103,15 @@ export class GameTDBMetadataProvider extends MetadataProvider<"gametdb">{
 			void this.clearModuleCache();
 	}
 
+	private databasesLoaded?: Promise<void>;
+
 	override async mount(): Promise<void> {
+		// Downloading and parsing the four databases takes tens of seconds and mounting is serial:
+		// load them in background, only GameTDB lookups (Wii, Wii U, Switch, PS3 games) wait for them
+		this.databasesLoaded = this.loadDatabases();
+	}
+
+	private async loadDatabases(): Promise<void> {
 		// Save in backend instead of returning because there's a lot of data
 		let errors: any[] = [];
 		const urls = [
@@ -278,6 +286,9 @@ export class GameTDBMetadataProvider extends MetadataProvider<"gametdb">{
 			return [];
 
 		this.logger.debug("Games ids", appId, ids);
+
+		// Databases are loaded in background after mount
+		await this.databasesLoaded;
 
 		let entries: GameTDBGame[] = [];
 		for(let id of ids){
