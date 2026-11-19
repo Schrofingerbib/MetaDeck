@@ -73,7 +73,10 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	manual_overrides: Record<number, MetadataManualOverride>,
 	// Steam app matched by hand to a shortcut ("Find a Steam Match"), for Steam-backed features
 	// (community, news...). Independent from the metadata provider.
-	steam_matches: Record<number, number>
+	steam_matches: Record<number, number>,
+	// Apps managed by hand only (software): no metadata providers, compatibility or achievements.
+	// Without manual edits they are left to Steam, as excluded apps
+	manual_only_apps?: number[]
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
@@ -118,6 +121,31 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		new RAWGMetadataProvider(this),
 		new RetroAchievementsMetadataProvider(this)
 	];
+
+	get manualOnlyApps(): number[]
+	{
+		return this.config.manual_only_apps ?? [];
+	}
+
+	isManualOnly(appId: number): boolean
+	{
+		return this.manualOnlyApps.includes(appId);
+	}
+
+	async setManualOnly(appId: number, manualOnly: boolean): Promise<void>
+	{
+		const apps = this.manualOnlyApps.filter((id) => id !== appId);
+		this.config.manual_only_apps = manualOnly ? [...apps, appId] : apps;
+		await this.saveConfig();
+	}
+
+	// Manual-only apps without manual edits are excluded: nothing to show, Steam's own page stays
+	// (and Decky Metadata, which takes MetaDeck's excluded apps, keeps them)
+	override get excludedApps(): number[]
+	{
+		const manual = this.config.manual_overrides ?? {};
+		return super.excludedApps.concat(this.manualOnlyApps.filter((id) => !manual[id]));
+	}
 
 	getManualOverride(appId: number): MetadataManualOverride | undefined
 	{
@@ -181,6 +209,9 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	public override hasCachedData(appId: number): boolean
 	{
+		// Manual-only apps have nothing to fetch
+		if (this.isManualOnly(appId))
+			return true;
 		// Provider data only: manual edits must not prevent fetching it
 		return super.getCachedData(appId) !== undefined;
 	}
@@ -1005,6 +1036,8 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 	}
 
 	protected override async fetchDataProviders(appId: number): Promise<[ProviderIdentifier<MetadataModule>, MetadataData] | undefined> {
+		if (this.isManualOnly(appId))
+			return undefined;
 		let results: Partial<Record<ProviderIdentifier<MetadataModule>, MetadataData>> = {};
 		for (const provider of this.providers){
 			// isValid (not just enabled): a provider without its API key must be skipped, not throw.

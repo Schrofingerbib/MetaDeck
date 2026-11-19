@@ -78,10 +78,11 @@ type Draft = {
 	emudeckId: string; // EmuDeck list entry ("PS2 · Title"): empty for automatic, "0" for none
 	title: string; // The shortcut's name
 	raGameId: string; // RetroAchievements game: empty for automatic (ROM hash), "0" for none
+	manualOnly: boolean; // Software: only manual data, no providers, compatibility or achievements
 };
 
 // Draft fields saved elsewhere than in the manual metadata edits
-const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId", "title", "raGameId"];
+const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId", "title", "raGameId", "manualOnly"];
 
 const RA_MEDIA = "https://media.retroachievements.org";
 const achievementImageStyle = { width: 40, height: 40, borderRadius: 4, flexShrink: 0 } as const;
@@ -122,7 +123,7 @@ const steamImageStyle = {
 	borderRadius: 4
 } as const;
 
-function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = "", title = "", raGameId = ""): Draft {
+function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = "", title = "", raGameId = "", manualOnly = false): Draft {
 	return {
 		description: data?.description ?? "",
 		developers: namesToText(data?.developers),
@@ -135,7 +136,8 @@ function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true,
 		steamCompat,
 		emudeckId,
 		title,
-		raGameId
+		raGameId,
+		manualOnly
 	};
 }
 
@@ -249,7 +251,7 @@ export const MetadataEditor: FC = () => {
 		return id === undefined ? "" : String(id);
 	};
 	const currentDraft = () => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat(), emudeckPin(),
-		appStore.GetAppOverviewByAppID(appId)?.display_name ?? "", raPin());
+		appStore.GetAppOverviewByAppID(appId)?.display_name ?? "", raPin(), module.isManualOnly(appId));
 
 	const [saved, setSaved] = useState<Draft>(currentDraft);
 	const [draft, setDraft] = useState<Draft>(saved);
@@ -268,7 +270,7 @@ export const MetadataEditor: FC = () => {
 	const [manual, setManual] = useState(() => module.getManualOverride(appId));
 	const [saving, setSaving] = useState(false);
 
-	const managed = overview?.app_type === SteamAppTypeShortcut && !module.excludedApps.includes(appId);
+	const managed = overview?.app_type === SteamAppTypeShortcut && (!module.excludedApps.includes(appId) || module.isManualOnly(appId));
 	const provider = module.getProviderData(appId);
 	const providerId = module.dataProviders[appId];
 	const changes = changedFields(draft, saved);
@@ -309,6 +311,19 @@ export const MetadataEditor: FC = () => {
 				// Steam updates the app's name shortly after: wait for it before reloading the page
 				for (let i = 0; i < 20 && appStore.GetAppOverviewByAppID(appId)?.display_name !== title; i++)
 					await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			if (changes.includes("manualOnly")){
+				// Saved after the manual edits: an app with them is no longer excluded
+				await module.setManualOnly(appId, draft.manualOnly);
+				// Forget (or fetch again) the provider data, then the compatibility and achievements
+				await module.onExcludedChange([], [appId]);
+				await module.fetchDataAsync(appId);
+				await module.refreshApp(appId);
+				for (const other of [state.modules.compatdata, state.modules.achievements]){
+					await other.onExcludedChange([], [appId]);
+					await other.fetchDataAsync(appId);
+					await other.apply(appId);
+				}
 			}
 			if (changes.includes("raGameId")){
 				await raProvider()?.setOverride(appId, draft.raGameId === "" ? undefined : Number(draft.raGameId));
@@ -731,7 +746,8 @@ export const MetadataEditor: FC = () => {
 		</div>;
 	const isEdited = (key: keyof MetadataManualOverride) => manual?.[key] !== undefined;
 
-	const sourceLabel = providerId ? `${t("editorSource")} · ${providerId}` : `${t("editorSource")} · ${t("editorSourceNone")}`;
+	const sourceLabel = draft.manualOnly ? `${t("editorSource")} · ${t("editorManualSource")}` :
+		providerId ? `${t("editorSource")} · ${providerId}` : `${t("editorSource")} · ${t("editorSourceNone")}`;
 
 	return (
 		<ScrollPanel>
@@ -769,6 +785,17 @@ export const MetadataEditor: FC = () => {
 							</DialogButton>
 						</div>
 
+						<PanelSection>
+							<PanelSectionRow>
+								<ToggleField
+									label={t("editorManualOnly")}
+									description={t("editorManualOnlyDesc")}
+									checked={draft.manualOnly}
+									onChange={(checked) => update({ manualOnly: checked })}/>
+							</PanelSectionRow>
+						</PanelSection>
+
+						{!draft.manualOnly && <>
 						<PanelSection title={t("editorSteamMatch")}>
 							<PanelSectionRow>
 								<div style={compactTextStyle}>{t("editorSteamMatchHelp")}</div>
@@ -888,6 +915,8 @@ export const MetadataEditor: FC = () => {
 							)}
 						</PanelSection>
 
+						</>}
+
 						<PanelSection title={sourceLabel}>
 							<PanelSectionRow>
 								{field("editorTitle", false,
@@ -934,6 +963,7 @@ export const MetadataEditor: FC = () => {
 							</PanelSectionRow>
 						</PanelSection>
 
+						{!draft.manualOnly && <>
 						<PanelSection title={t("editorCompatSection")}>
 							<PanelSectionRow>
 								<div style={compactTextStyle}>{`${t("editorCompatCurrent")}: ${compatCurrent}`}</div>
@@ -1134,6 +1164,7 @@ export const MetadataEditor: FC = () => {
 									</PanelSectionRow>
 								</>}
 						</PanelSection>
+						</>}
 					</>}
 			</Focusable>
 		</ScrollPanel>
