@@ -11,6 +11,7 @@ import { FuzzySearchCompatdataProvider, type FuzzySearchCompatdataProviderCache,
 import Logger from "../../../logger";
 import { FaGamepad } from "react-icons/fa";
 import { distance } from "fastest-levenshtein";
+import { rankTitles } from "../../../titleSearch";
 
 // RetroDECK / ES-DE system folders -> EmuDeck list consoles
 const SYSTEM_CONSOLES: Record<string, string[]> = {
@@ -130,9 +131,18 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 		return Promise.resolve(this.searchReports(title, consoleNames, 5));
 	}
 
-	/** Free-text search of the whole list (any console), for the "Change Metadata" page */
+	/** Search of the whole list (any console) by words, for the "Change Metadata" page */
 	override searchByQuery(query: string): Promise<CompatdataData[]>{
-		return Promise.resolve(this.searchReports(query, undefined, 10));
+		const order = new Map(rankTitles(query, this.verifiedTitles, (title) => title).map((title, i) => [title, i]));
+		const groups: Record<string, VerifiedDBResults[]> = {};
+		for (const row of this.verifiedRows)
+			if (order.has(row.Game))
+				(groups[`${row.Game}\u0000${row.Console}`] ??= []).push(row);
+
+		return Promise.resolve(Object.values(groups)
+			.sort((a, b) => order.get(a[0].Game)! - order.get(b[0].Game)! || a[0].Console.localeCompare(b[0].Console))
+			.slice(0, 30)
+			.map(reports => this.toEntry(reports)));
 	}
 
 	private searchReports(title: string, consoleNames: string[] | undefined, limit: number): CompatdataData[]{
