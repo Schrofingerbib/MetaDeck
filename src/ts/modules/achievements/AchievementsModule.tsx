@@ -185,10 +185,10 @@ export class AchievementsModule extends Module<"achievements", AchievementsProvi
 		}): any;
 	}
 
-	// Manual-only apps (software) have no achievements
+	// Software apps (software) have no achievements
 	override get excludedApps(): number[]
 	{
-		return super.excludedApps.concat(this.state.modules.metadata?.manualOnlyApps ?? []);
+		return super.excludedApps.concat(this.state.modules.metadata?.softwareApps ?? []);
 	}
 
 	providers: AchievementsProvider<any>[] = [

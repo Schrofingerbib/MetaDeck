@@ -63,10 +63,10 @@ export class CompatdataModule extends Module<"compatdata", CompatdataProvider<an
 
 	logger = new Logger(this.identifier);
 
-	// Manual-only apps (software) have no compatibility
+	// Software apps (software) have no compatibility
 	override get excludedApps(): number[]
 	{
-		return super.excludedApps.concat(this.state.modules.metadata?.manualOnlyApps ?? []);
+		return super.excludedApps.concat(this.state.modules.metadata?.softwareApps ?? []);
 	}
 
 	providers: CompatdataProvider<any>[] = [

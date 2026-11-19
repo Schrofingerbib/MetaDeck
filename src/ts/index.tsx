@@ -133,8 +133,8 @@ export default definePlugin(() => {
 	mounts.addMount(contextMenuPatch((appId) =>
 		state.modules.metadata.isValid &&
 		appStore.GetAppOverviewByAppID(appId)?.app_type === SteamAppTypeShortcut &&
-		// Manual-only apps (software) can be edited even before they have manual edits
-		(!state.modules.metadata.excludedApps.includes(appId) || state.modules.metadata.isManualOnly(appId))
+		// Software apps (software) can be edited even before they have manual edits
+		(!state.modules.metadata.excludedApps.includes(appId) || state.modules.metadata.isSoftware(appId))
 	));
 	
 	state.loadingData.total = 0;

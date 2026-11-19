@@ -39,6 +39,7 @@ import { useMetaDeckState } from "../../MetaDeckState";
 import React from "react";
 import { GameTDBMetadataProvider, type GameTDBMetadataProviderCache, type GameTDBMetadataProviderConfig } from "./providers/GameTDBMetadataProvider";
 import { LizardByteGameDBMetadataProvider, LizardByteGameDBMetadataProviderCache, LizardByteGameDBMetadataProviderConfig } from "./providers/LizardByteGameDBMetadataProvider";
+import { FlathubMetadataProvider, type FlathubMetadataProviderCache, type FlathubMetadataProviderConfig } from "./providers/FlathubMetadataProvider";
 import { FaRegFileLines } from "react-icons/fa6";
 import { RetroAchievementsMetadataProvider, type RetroAchievementsMetadataProviderCache, type RetroAchievementsMetadataProviderConfig } from "./providers/RetroAchievementsMetadataProvider";
 import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleDbMetadataProviderConfig } from "./providers/TitleDbMetadataProvider";
@@ -74,13 +75,13 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	// Steam app matched by hand to a shortcut ("Find a Steam Match"), for Steam-backed features
 	// (community, news...). Independent from the metadata provider.
 	steam_matches: Record<number, number>,
-	// Apps managed by hand only (software): no metadata providers, compatibility or achievements.
-	// Without manual edits they are left to Steam, as excluded apps
-	manual_only_apps?: number[]
+	// Software (apps, tools): Flathub and manual edits only, no game providers, compatibility or achievements
+	software_apps?: number[]
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
-
+	// Software apps for which the software providers found nothing (checked once, until the cache is cleared)
+	software_without_source?: number[]
 }
 
 export interface MetadataProviderConfigs{
@@ -89,6 +90,7 @@ export interface MetadataProviderConfigs{
 	rawg: RAWGMetadataProviderConfig;
 	gametdb: GameTDBMetadataProviderConfig;
 	lizardbyte: LizardByteGameDBMetadataProviderConfig;
+	flathub: FlathubMetadataProviderConfig;
 	ra: RetroAchievementsMetadataProviderConfig;
 	titledb: TitleDbMetadataProviderConfig;
 	dbox: DBoxMetadataProviderConfig;
@@ -100,6 +102,7 @@ export interface MetadataProviderCaches{
 	rawg: RAWGMetadataProviderCache;
 	gametdb: GameTDBMetadataProviderCache;
 	lizardbyte: LizardByteGameDBMetadataProviderCache;
+	flathub: FlathubMetadataProviderCache;
 	ra: RetroAchievementsMetadataProviderCache;
 	titledb: TitleDbMetadataProviderCache;
 	dbox: DBoxMetadataProviderCache;
@@ -119,32 +122,55 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		new SteamMetadataProvider(this),
 		new LizardByteGameDBMetadataProvider(this),
 		new RAWGMetadataProvider(this),
-		new RetroAchievementsMetadataProvider(this)
+		new RetroAchievementsMetadataProvider(this),
+		// Software only, see fetchDataProviders
+		new FlathubMetadataProvider(this)
 	];
 
-	get manualOnlyApps(): number[]
+	get softwareApps(): number[]
 	{
-		return this.config.manual_only_apps ?? [];
+		return this.config.software_apps ?? [];
 	}
 
-	isManualOnly(appId: number): boolean
+	isSoftware(appId: number): boolean
 	{
-		return this.manualOnlyApps.includes(appId);
+		return this.softwareApps.includes(appId);
 	}
 
-	async setManualOnly(appId: number, manualOnly: boolean): Promise<void>
+	async setSoftware(appId: number, software: boolean): Promise<void>
 	{
-		const apps = this.manualOnlyApps.filter((id) => id !== appId);
-		this.config.manual_only_apps = manualOnly ? [...apps, appId] : apps;
+		const apps = this.softwareApps.filter((id) => id !== appId);
+		this.config.software_apps = software ? [...apps, appId] : apps;
 		await this.saveConfig();
 	}
 
-	// Manual-only apps without manual edits are excluded: nothing to show, Steam's own page stays
-	// (and Decky Metadata, which takes MetaDeck's excluded apps, keeps them)
+	// Software apps with nothing to show (no Flathub entry found, no manual edits) are excluded:
+	// Steam's own page stays (and Decky Metadata, which takes MetaDeck's excluded apps, keeps them)
 	override get excludedApps(): number[]
 	{
 		const manual = this.config.manual_overrides ?? {};
-		return super.excludedApps.concat(this.manualOnlyApps.filter((id) => !manual[id]));
+		const withoutSource = this.cache.software_without_source ?? [];
+		return super.excludedApps.concat(this.softwareApps.filter((id) => !manual[id] && withoutSource.includes(id)));
+	}
+
+	private setSoftwareWithoutSource(appId: number, withoutSource: boolean)
+	{
+		const apps = (this.cache.software_without_source ?? []).filter((id) => id !== appId);
+		if (withoutSource)
+			apps.push(appId);
+		if (apps.length !== (this.cache.software_without_source ?? []).length){
+			this.cache.software_without_source = apps;
+			void this.saveCache();
+		}
+	}
+
+	public override async fetchDataAsync(appId: number): Promise<MetadataData | undefined>
+	{
+		const data = await super.fetchDataAsync(appId);
+		// Remember software apps without an entry, so they're excluded without asking again
+		if (this.isSoftware(appId) && !this.excludedApps.includes(appId))
+			this.setSoftwareWithoutSource(appId, !this.hasCachedData(appId));
+		return data;
 	}
 
 	getManualOverride(appId: number): MetadataManualOverride | undefined
@@ -209,9 +235,6 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	public override hasCachedData(appId: number): boolean
 	{
-		// Manual-only apps have nothing to fetch
-		if (this.isManualOnly(appId))
-			return true;
 		// Provider data only: manual edits must not prevent fetching it
 		return super.getCachedData(appId) !== undefined;
 	}
@@ -235,6 +258,8 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	override async removeCache(appId: number){
 		await super.removeCache(appId);
+		// Look for a software entry again
+		this.setSoftwareWithoutSource(appId, false);
 		
 		let appData = appDetailsStore.GetAppData(appId);
 		if (!appData)
@@ -1036,10 +1061,11 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 	}
 
 	protected override async fetchDataProviders(appId: number): Promise<[ProviderIdentifier<MetadataModule>, MetadataData] | undefined> {
-		if (this.isManualOnly(appId))
-			return undefined;
+		// Software: the software providers only (Flathub); games: the others
+		const software = this.isSoftware(appId);
+		const providers = this.providers.filter((provider) => (provider instanceof FlathubMetadataProvider) === software);
 		let results: Partial<Record<ProviderIdentifier<MetadataModule>, MetadataData>> = {};
-		for (const provider of this.providers){
+		for (const provider of providers){
 			// isValid (not just enabled): a provider without its API key must be skipped, not throw.
 			// A failing provider must not stop the remaining ones.
 			let data: MetadataData | undefined;

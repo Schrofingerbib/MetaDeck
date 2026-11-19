@@ -49,7 +49,7 @@ export class Settings
 				install_date: true,
 				manual_overrides: {},
 				steam_matches: {},
-				manual_only_apps: [],
+				software_apps: [],
 				excluded_apps: [],
 				providers_overrides: {},
 				providers: {
@@ -121,6 +121,13 @@ export class Settings
 					},
 					// Fuzzy search (english)
 					lizardbyte: { // Can resolve to Steam if finds id
+						enabled: true,
+						fuzziness: 5,
+						excluded_apps: [],
+						overrides: {},
+						resolvers: {}
+					},
+					flathub: { // Software apps only: Flatpak app ID, or an entry linked by hand
 						enabled: true,
 						fuzziness: 5,
 						excluded_apps: [],
@@ -333,6 +340,7 @@ export class Settings
 					rawg: {},
 					gametdb: {},
 					lizardbyte: {},
+					flathub: {},
 					ra: {},
 					titledb: {},
 					dbox: {}
