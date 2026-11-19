@@ -22,6 +22,7 @@ const API = "https://flathub.org/api/v2";
 
 type Appstream = {
 	id?: string;
+	categories?: string[]; // freedesktop.org categories: "Game", "ActionGame", "Network"...
 	name?: string;
 	summary?: string;
 	description?: string; // AppStream markup: <p>, <ul>/<ol>, <li>, <em>, <code>
@@ -40,6 +41,13 @@ export function getFlatpakAppId(launchCommand: string): string | undefined{
 	const appId = tokens.slice(run + 1).find((token) => !token.startsWith("-"));
 	return appId && /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(appId) ? appId : undefined;
 }
+
+// freedesktop.org game genres: a Flathub entry with one of them is a game, otherwise an app
+// (launchers and clients are in "Game" too: Moonlight "Game, Network", itch "Game, PackageManager")
+const GAME_GENRES = new Set([
+	"ActionGame", "AdventureGame", "ArcadeGame", "BoardGame", "BlocksGame", "CardGame", "KidsGame",
+	"LogicGame", "RolePlaying", "Shooter", "Simulation", "SportsGame", "StrategyGame"
+]);
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
 
@@ -82,6 +90,17 @@ export class FlathubMetadataProvider extends FuzzySearchMetadataProvider<"flathu
 			developers: hit.developer_name ? [{ name: hit.developer_name, url: "" }] : [],
 			store_categories: []
 		}));
+	}
+
+	/** Whether a Flatpak is software or a game by its Flathub categories; undefined when not on Flathub */
+	async classify(flatpakId: string): Promise<"software" | "game" | undefined>{
+		const response = await fetchNoCorsLegacyTimeout(`${API}/appstream/${encodeURIComponent(flatpakId)}`);
+		if (response.status === 404)
+			return undefined;
+		if (!response.ok)
+			throw Error(`Flathub entry ${flatpakId} failed (${response.status})`);
+		const app: Appstream = await response.json();
+		return (app.categories ?? []).some((category) => GAME_GENRES.has(category)) ? "game" : "software";
 	}
 
 	/** The full Flathub entry of an app ID */

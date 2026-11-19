@@ -39,7 +39,7 @@ import { useMetaDeckState } from "../../MetaDeckState";
 import React from "react";
 import { GameTDBMetadataProvider, type GameTDBMetadataProviderCache, type GameTDBMetadataProviderConfig } from "./providers/GameTDBMetadataProvider";
 import { LizardByteGameDBMetadataProvider, LizardByteGameDBMetadataProviderCache, LizardByteGameDBMetadataProviderConfig } from "./providers/LizardByteGameDBMetadataProvider";
-import { FlathubMetadataProvider, type FlathubMetadataProviderCache, type FlathubMetadataProviderConfig } from "./providers/FlathubMetadataProvider";
+import { FlathubMetadataProvider, getFlatpakAppId, type FlathubMetadataProviderCache, type FlathubMetadataProviderConfig } from "./providers/FlathubMetadataProvider";
 import { FaRegFileLines } from "react-icons/fa6";
 import { RetroAchievementsMetadataProvider, type RetroAchievementsMetadataProviderCache, type RetroAchievementsMetadataProviderConfig } from "./providers/RetroAchievementsMetadataProvider";
 import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleDbMetadataProviderConfig } from "./providers/TitleDbMetadataProvider";
@@ -75,13 +75,18 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	// Steam app matched by hand to a shortcut ("Find a Steam Match"), for Steam-backed features
 	// (community, news...). Independent from the metadata provider.
 	steam_matches: Record<number, number>,
-	// Software (apps, tools): Flathub and manual edits only, no game providers, compatibility or achievements
-	software_apps?: number[]
+	// Software (apps, tools): Flathub and manual edits only, no game providers, compatibility or achievements.
+	// Set by hand, or detected for new Flatpak shortcuts from their Flathub categories
+	software_apps?: number[],
+	// Marked as games by hand: never detected as software
+	game_apps?: number[]
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
 	// Software apps for which the software providers found nothing (checked once, until the cache is cleared)
-	software_without_source?: number[]
+	software_without_source?: number[],
+	// New shortcuts already checked for software
+	software_checked?: number[]
 }
 
 export interface MetadataProviderConfigs{
@@ -137,11 +142,52 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		return this.softwareApps.includes(appId);
 	}
 
+	/** Marks an app as software or, by hand, as a game (then it's never detected as software) */
 	async setSoftware(appId: number, software: boolean): Promise<void>
 	{
 		const apps = this.softwareApps.filter((id) => id !== appId);
 		this.config.software_apps = software ? [...apps, appId] : apps;
+		const games = (this.config.game_apps ?? []).filter((id) => id !== appId);
+		this.config.game_apps = software ? games : [...games, appId];
 		await this.saveConfig();
+	}
+
+	private detectingSoftware: Record<number, Promise<void>> = {};
+
+	/**
+	 * New Flatpak shortcuts (no data yet, not a ROM, not classified by hand) are software unless Flathub
+	 * gives them a game genre. Checked once; on network errors it's tried again later.
+	 */
+	private detectSoftware(appId: number): Promise<void>
+	{
+		if (this.isSoftware(appId) || (this.config.game_apps ?? []).includes(appId) || this.hasCachedData(appId) ||
+			this.excludedApps.includes(appId) || (this.cache.software_checked ?? []).includes(appId))
+			return Promise.resolve();
+
+		return this.detectingSoftware[appId] ??= (async () => {
+			try{
+				const flathub = this.providers.find((provider): provider is FlathubMetadataProvider => provider instanceof FlathubMetadataProvider);
+				const details = flathub?.isValid ? await getAppDetails(appId) : undefined;
+				if (!details || appStore.GetAppOverviewByAppID(appId)?.app_type !== SteamAppTypeShortcut)
+					return;
+
+				const flatpakId = getFlatpakAppId(getLaunchCommand(details));
+				const kind = flatpakId ? await flathub!.classify(flatpakId) : undefined;
+				this.cache.software_checked = [...(this.cache.software_checked ?? []), appId];
+				void this.saveCache();
+				if (kind === "software"){
+					this.logger.log(`Detected as software from Flathub (${flatpakId})`, appId);
+					this.config.software_apps = [...this.softwareApps, appId];
+					await this.saveConfig();
+				}
+			}
+			catch (e: any){
+				this.logger.error("Software detection failed", appId, e);
+			}
+			finally{
+				delete this.detectingSoftware[appId];
+			}
+		})();
 	}
 
 	// Software apps with nothing to show (no Flathub entry found, no manual edits) are excluded:
@@ -166,6 +212,7 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	public override async fetchDataAsync(appId: number): Promise<MetadataData | undefined>
 	{
+		await this.detectSoftware(appId);
 		const data = await super.fetchDataAsync(appId);
 		// Remember software apps without an entry, so they're excluded without asking again
 		if (this.isSoftware(appId) && !this.excludedApps.includes(appId))
