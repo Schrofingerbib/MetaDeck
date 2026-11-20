@@ -79,3 +79,37 @@ export function parseSteamAppId(text: string): number | undefined {
 	const appid = match ? Number(match) : NaN;
 	return Number.isInteger(appid) && appid > 0 ? appid : undefined;
 }
+
+const storeGone = new Map<number, Promise<boolean>>();
+
+/**
+ * Whether Steam's store no longer has a page for an app (delisted, or no such app): only when Steam says so,
+ * never because of a network error. Its community, activity and controller layouts may still exist.
+ */
+export function isSteamStoreGone(appid: number): Promise<boolean> {
+	let gone = storeGone.get(appid);
+	if (!gone){
+		gone = (async () => {
+			const response = await fetchNoCorsLegacyTimeout(`https://store.steampowered.com/api/appdetails?appids=${appid}&filters=basic`);
+			if (!response.ok)
+				throw new Error(`${response.status}`);
+			return JSON.parse(await response.text())?.[String(appid)]?.success === false;
+		})();
+		storeGone.set(appid, gone);
+		gone.catch(() => storeGone.delete(appid)); // Asked again next time
+	}
+	return gone.catch(() => false);
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
+
+/** An app's name from its Steam Community hub, which stays when the store page goes; undefined for no such app */
+export async function getSteamCommunityName(appid: number): Promise<string | undefined> {
+	const response = await fetchNoCorsLegacyTimeout(`https://steamcommunity.com/app/${appid}`);
+	if (!response.ok)
+		return undefined;
+	// No such app: Steam redirects to the store's home ("Welcome to Steam")
+	const title = (await response.text()).match(/<title>\s*Steam Community\s*::\s*([^<]+?)\s*<\/title>/i)?.[1];
+	return title?.replace(/&(#\d+|[a-z]+);/gi, (entity, name: string) =>
+		name.startsWith("#") ? String.fromCharCode(Number(name.slice(1))) : ENTITIES[name.toLowerCase()] ?? entity);
+}

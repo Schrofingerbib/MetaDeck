@@ -358,5 +358,8 @@
 	"trailerMute": "Mute",
 	"trailerUnmute": "Unmute",
 	"trailerEnlarge": "Enlarge",
-	"trailerShrink": "Back"
+	"trailerShrink": "Back",
+	"editorSteamOnStore": "On the Steam store: {title}",
+	"editorSteamDelisted": "{title} is no longer on the Steam store. Its Community, Activity and controller layouts are still used; the metadata, trailer and compatibility come from other sources",
+	"editorSteamNoApp": "No Steam app has this ID"
 }
