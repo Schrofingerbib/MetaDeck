@@ -1,4 +1,4 @@
-import type { AchievementsData, ID } from "../../../Interfaces"
+import type { AchievementsData, ID, IDDictionary } from "../../../Interfaces"
 import { t } from "../../../useTranslations"
 import { copyToClipboard, fetchNoCorsLegacyTimeout, getAppDetails, getAppHeader, toasterToast } from "../../../util"
 import type { ProviderCache, ProviderConfig } from "../../Provider"
@@ -12,10 +12,37 @@ import { useState } from "react"
 import { Markdown } from "../../../markdown"
 import React from "react"
 import { fetchNoCors } from "@decky/api"
+import {
+	getFrontEndSystem, getLaunchCommand, isDolphinGame, isDuckstationGame, isFlycastGame, isMelonDSGame,
+	isMGBAGame, isPCSX2Game, isPPSSPPGame, isRosaliesMupenGUIGame
+} from "../../../shortcuts"
+
+// RetroDECK / ES-DE system folders -> RetroAchievements console IDs (API_GetConsoleIDs)
+const SYSTEM_RA_CONSOLES: Record<string, number> = {
+	genesis: 1, megadrive: 1, megadrivejp: 1, n64: 2, snes: 3, sfc: 3, gb: 4, gba: 5, gbc: 6, nes: 7, famicom: 7,
+	pcengine: 8, tg16: 8, segacd: 9, megacd: 9, megacdjp: 9, sega32x: 10, mastersystem: 11, mark3: 11, psx: 12,
+	atarilynx: 13, ngp: 14, ngpc: 14, gamegear: 15, gc: 16, atarijaguar: 17, nds: 18, wii: 19, ps2: 21,
+	pokemini: 24, atari2600: 25, arcade: 27, mame: 27, fbneo: 27, virtualboy: 28, msx: 29, msx1: 29, msx2: 29,
+	saturn: 39, saturnjp: 39, dreamcast: 40, psp: 41, "3do": 43, colecovision: 44, intellivision: 45, vectrex: 46,
+	atari7800: 51, wonderswan: 53, wonderswancolor: 53, neogeocd: 56, pcenginecd: 76, tg_cd: 76, atarijaguarcd: 77
+};
+
+export type RetroAchievementsConsole = { ID: number; Name: string; };
+export type RetroAchievementsGame = {
+	ID: number;
+	Title: string;
+	ConsoleID: number;
+	ConsoleName: string;
+	ImageIcon: string; // "/Images/126542.png"
+	NumAchievements: number;
+	Points: number;
+};
 
 export interface RetroAchievementsAchievementsProviderConfig extends ProviderConfig<'ra'>{
 	username: string;
 	api_key: string;
+	// Game ID chosen by hand on the "Change Metadata" page, 0 for no achievements (instead of the ROM hash)
+	overrides?: IDDictionary;
 	points: boolean;
 
 	// https://github.com/RetroAchievements/RAWeb/blob/fa58a24122f80e86e401443514800a49d344b7d1/public/API/API_GetGameInfoAndUserProgress.php#L31
@@ -50,6 +77,93 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 
 	override get isValid(): boolean {
 		return super.isValid && !!this.username && !!this.apiKey;
+	}
+
+	get overrides(): IDDictionary{
+		return this.config.overrides ?? {};
+	}
+
+	/** Pins (or unpins, with undefined; 0 for no achievements) the game of an app, whatever its ROM hash */
+	async setOverride(appId: number, id: ID | undefined): Promise<void>{
+		const overrides = { ...this.overrides };
+		if (id === undefined)
+			delete overrides[appId];
+		else
+			overrides[appId] = id;
+		this.config.overrides = overrides;
+		await this.saveConfig();
+	}
+
+	// A pinned game doesn't need a ROM hash known by RetroAchievements
+	override async test(appId: number, external = false): Promise<boolean>{
+		if (!external && this.excludedApps.includes(appId))
+			return false;
+		const pinned = this.overrides[appId];
+		if (pinned !== undefined)
+			return pinned !== 0;
+		return super.test(appId, external);
+	}
+
+	private consoles?: Promise<RetroAchievementsConsole[]>;
+	private consoleGames: Record<number, Promise<RetroAchievementsGame[]>> = {};
+
+	/** Game systems, for the "Change Metadata" page (kept for the session) */
+	getConsoles(): Promise<RetroAchievementsConsole[]>{
+		this.consoles ??= this.raRequest(`https://retroachievements.org/API/API_GetConsoleIDs.php?` + new URLSearchParams({
+			y: this.apiKey, a: "1", g: "1"
+		}).toString())
+			.then(async (response) => ((await response.json()) as RetroAchievementsConsole[]).sort((a, b) => a.Name.localeCompare(b.Name)))
+			.catch((e) => {
+				this.consoles = undefined;
+				throw e;
+			});
+		return this.consoles;
+	}
+
+	/** Games with achievements of a console (kept for the session) */
+	getConsoleGames(consoleId: number): Promise<RetroAchievementsGame[]>{
+		this.consoleGames[consoleId] ??= this.raRequest(`https://retroachievements.org/API/API_GetGameList.php?` + new URLSearchParams({
+			y: this.apiKey, i: consoleId.toString(), f: "1"
+		}).toString())
+			.then(async (response) => (await response.json()) as RetroAchievementsGame[])
+			.catch((e) => {
+				delete this.consoleGames[consoleId];
+				throw e;
+			});
+		return this.consoleGames[consoleId];
+	}
+
+	/** The console of an app, from its front-end system or emulator */
+	async getAppConsole(appId: number): Promise<number | undefined>{
+		const details = await getAppDetails(appId);
+		if (!details)
+			return undefined;
+		const launchCommand = getLaunchCommand(details);
+		const system = getFrontEndSystem(launchCommand);
+		if (system && SYSTEM_RA_CONSOLES[system])
+			return SYSTEM_RA_CONSOLES[system];
+		if (isDuckstationGame(launchCommand))
+			return 12;
+		if (isPCSX2Game(launchCommand))
+			return 21;
+		if (isRosaliesMupenGUIGame(launchCommand))
+			return 2;
+		if (isDolphinGame(launchCommand))
+			return 16;
+		if (isMelonDSGame(launchCommand))
+			return 18;
+		if (isMGBAGame(launchCommand))
+			return 5;
+		if (isPPSSPPGame(launchCommand))
+			return 41;
+		if (isFlycastGame(launchCommand))
+			return 40;
+		return undefined;
+	}
+
+	/** A game's achievements and the user's progress (cached 5 minutes) */
+	getGameProgress(raId: ID): Promise<GetGameInfoAndUserProgressResponse | undefined>{
+		return this.getGameInfoAndProgressInternal(raId);
 	}
 
 	get username(): string{
@@ -282,15 +396,17 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 			if (!details)
 				return undefined;
 
-			// Retrieve parent games
+			// Retrieve parent games: a subset has its game as parent ("Super Mario 64 [Subset - Bonus]" -> "Super Mario 64").
+			// The loop never moved up before, so a subset (ParentGameID set) looped forever and blocked the provider
 			let parents: Record<ID, typeof game> = { [game.ID]: game };
-			while((game as any).ParentGameID){
-				let newGame = await this.getGameInfoAndProgressInternal((game as any).ParentGameID);
-				if(!newGame)
+			let child = game;
+			while((child as any).ParentGameID && !parents[(child as any).ParentGameID]){
+				const parent = await this.getGameInfoAndProgressInternal((child as any).ParentGameID);
+				if(!parent)
 					break;
 
-				parents[game.ID] = newGame;
-				newGame = game;
+				parents[parent.ID] = parent;
+				child = parent;
 			}
 
 			const parentGame = game;
@@ -303,7 +419,8 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 						continue;
 
 					for(let subsetId of this.parentSubsets[gameId]){
-						if(subsets[subsetId])
+						// The chosen subset is already the base set
+						if(subsets[subsetId] || parents[subsetId])
 							continue;
 
 						game = await this.getGameInfoAndProgressInternal(subsetId);
@@ -634,7 +751,11 @@ export class RetroAchievementsAchievementsProvider extends AchievementsProvider<
 		if(!this.username || !this.apiKey)
 			return undefined;
 		
-		const resolved = await this.resolve(appId, true);
+		// A game chosen by hand wins over the ROM hash
+		const pinned = this.overrides[appId];
+		if (pinned === 0)
+			return undefined;
+		const resolved = pinned ?? await this.resolve(appId, true);
 		if (!resolved)
 			return undefined;
 

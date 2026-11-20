@@ -227,6 +227,7 @@ export class Settings
 						enabled: true,
 						username: '',
 						api_key: '',
+						overrides: {},
 						points: true,
 						achievement_types: true,
 						parent_sets: true,
