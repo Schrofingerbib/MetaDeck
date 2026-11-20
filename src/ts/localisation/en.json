@@ -345,5 +345,18 @@
 	"editorRaProgress": "Your progress: {unlocked}/{total}",
 	"editorSoftware": "Software",
 	"editorSoftwareDesc": "For apps and tools rather than games: Flathub (automatic for Flatpak apps, or the entry chosen below) and what is written here. No game providers, compatibility or achievements",
-	"editorSoftwareSource": "Manual"
+	"editorSoftwareSource": "Manual",
+	"trailers": "Trailers",
+	"trailersEnabled": "Game Trailers",
+	"trailersEnabledDesc": "Plays the Steam trailer over a game's artwork on its page: Steam games, and non-Steam games with a Steam Match. While it plays, X mutes it and Y enlarges it",
+	"trailersDelay": "Fade-In Delay",
+	"trailersDelayDesc": "Wait from opening a game's page to showing its trailer",
+	"trailersAudio": "Trailer Audio",
+	"trailersAudioDesc": "Sound fades in with the trailer. X mutes or unmutes it",
+	"trailersHideLogo": "Hide Game Logo During Trailers",
+	"trailersHideLogoDesc": "The logo comes back when the trailer ends or you leave the page",
+	"trailerMute": "Mute",
+	"trailerUnmute": "Unmute",
+	"trailerEnlarge": "Enlarge",
+	"trailerShrink": "Back"
 }

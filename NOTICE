@@ -47,6 +47,12 @@ Ported components:
   template and community lists. Its Activity part is a new implementation
   (Steam's own activity store loads the matched game).
 
+- src/ts/trailers.ts, src/ts/trailerSettings.ts, src/ts/TrailerSettingsComponent.tsx
+  Game trailers on a game's page: the Detail view of src/trailers (v0.6.4),
+  with its fade-in delay, audio, hidden logo, X to mute, Y to enlarge and stop
+  on launch. Steam trailers are played with Steam's own DASH player instead of
+  Decky Metadata's player; the Home view and the IGN fallback are not ported.
+
 - src/ts/modules/compatdata/providers/SteamMatchCompatdataProvider.tsx
   Valve's compatibility of the matched Steam app: same store report
   (ajaxgetdeckappcompatibilityreport) as backend-rust/src/providers/steam.rs

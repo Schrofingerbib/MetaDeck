@@ -10,10 +10,12 @@ import { version } from "@decky/pkg";
 import type { EntryData } from "./Interfaces";
 import type { SteamAppAchievement } from "./SteamTypes";
 import { sleep } from "@decky/ui";
+import { defaultTrailerSettings, type TrailerSettings } from "./trailerSettings";
 
 export type ConfigData = {
 	version: string; // Plugin version
 	excluded_apps: number[];
+	trailers: TrailerSettings;
 	modules: ModuleConfigs;
 	resolvers: ResolverConfigs;
 }
@@ -34,6 +36,7 @@ export class Settings
 	static readonly defaultConfig: ConfigData = {
 		version: version,
 		excluded_apps: [],
+		trailers: { ...defaultTrailerSettings },
 		modules: {
 			metadata: {
 				enabled: true,

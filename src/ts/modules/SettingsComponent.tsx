@@ -4,7 +4,8 @@ import {DialogBody, DialogControlsSection, SidebarNavigation, SidebarNavigationP
 import {ModuleSettingsComponent} from "./ModuleSettingsComponent";
 import {Module} from "./Module";
 import { t } from "../useTranslations";
-import { FaWrench } from "react-icons/fa";
+import { FaFilm, FaWrench } from "react-icons/fa";
+import { TrailerSettingsComponent } from "../TrailerSettingsComponent";
 import { ExcludeAppComponent } from "./ExcludeAppComponent";
 
 export const SettingsComponent: FC = () => {
@@ -36,6 +37,12 @@ export const SettingsComponent: FC = () => {
 			content: <ModuleSettingsComponent module={module} />
 		});
 	}
+
+	pages.push({
+		title: t("trailers"),
+		icon: <FaFilm/>,
+		content: <TrailerSettingsComponent/>
+	});
 
 	return <SidebarNavigation pages={pages} />
 }
