@@ -48,6 +48,7 @@ export class Settings
 				install_size: true,
 				install_date: true,
 				manual_overrides: {},
+				steam_matches: {},
 				excluded_apps: [],
 				providers_overrides: {},
 				providers: {
@@ -149,6 +150,12 @@ export class Settings
 				excluded_apps: [],
 				providers_overrides: {},
 				providers: {
+					// Valve's compatibility of the Steam app matched by hand
+					steam_match: {
+						enabled: true,
+						excluded_apps: [],
+						resolvers: {}
+					},
 					// Id-based
 					pcsx2: {
 						enabled: true,
@@ -333,6 +340,7 @@ export class Settings
 				data: {},
 				data_providers: {},
 				providers: {
+					steam_match: {},
 					emudeck: {},
 					pcsx2: {},
 					rpcs3: {},

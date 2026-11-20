@@ -35,6 +35,15 @@ Ported components:
   The IGN search: same GraphQL queries and field mapping as
   backend-rust/src/providers/ign.rs (v0.6.4), rewritten in TypeScript.
 
+- src/ts/modules/metadata/SteamMatch.ts
+  The "Find a Steam Match" store search and preview: same store endpoints as
+  backend-rust/src/providers/steam.rs (v0.6.4), rewritten in TypeScript.
+
+- src/ts/modules/compatdata/providers/SteamMatchCompatdataProvider.tsx
+  Valve's compatibility of the matched Steam app: same store report
+  (ajaxgetdeckappcompatibilityreport) as backend-rust/src/providers/steam.rs
+  (v0.6.4), rewritten in TypeScript.
+
 - src/ts/modules/metadata/MetadataEditorStyles.ts
   The editor page styles, adapted from src/metadataEditorStyles.ts,
   src/styles.tsx and src/tokens.ts (v0.6.4), so both editors look alike.

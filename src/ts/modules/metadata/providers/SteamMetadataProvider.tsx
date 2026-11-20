@@ -229,7 +229,6 @@ export class SteamMetadataProvider extends FuzzySearchMetadataProvider<"steam">{
 		)
 	}
 
-	// Missing release_date
 	// Search results are already complete, this only fills entries made from an ID alone (ID overrides)
 	protected override async enrichMetadataForGame(_appId: number, game: MetadataData): Promise<void>{
 		if (game.description)
@@ -271,7 +270,8 @@ export class SteamMetadataProvider extends FuzzySearchMetadataProvider<"steam">{
 			matches_user_language: true,
 
 			rating: game.data.metacritic?.score,
-			release_date: undefined, // Cannot parse
+			// The store only gives a display string ("Mar 23, 2023" in English), parsed when possible
+			release_date: parseStoreDate((game.data as any).release_date?.date),
 			developers: (game.data.developers ?? []).map(d => ({name: d, url: ""})),
 			publishers: (game.data.publishers ?? []).map(p => ({name: p, url: ""})),
 			store_categories: (game.data.categories ?? [])
@@ -279,4 +279,15 @@ export class SteamMetadataProvider extends FuzzySearchMetadataProvider<"steam">{
 				.map(c => StoreCategory[StoreCategory[c.id] as any] as unknown as StoreCategory)
 		};
 	}
+}
+
+/** Store release dates like "Mar 23, 2023" or "21 Jan, 1998"; "Coming soon", quarters... can't be parsed */
+function parseStoreDate(text?: string): number | undefined {
+	if (!text)
+		return undefined;
+	const time = Date.parse(text);
+	if (Number.isNaN(time))
+		return undefined;
+	const date = new Date(time);
+	return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 1000);
 }

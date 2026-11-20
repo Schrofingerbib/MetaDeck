@@ -291,5 +291,20 @@
 	"editorDiscardTitle": "Discard changes?",
 	"editorDiscardBody": "There are unsaved changes, they will be lost.",
 	"editorDiscard": "Discard",
-	"editorSearchSection": "Search Metadata"
+	"editorSearchSection": "Search Metadata",
+	"editorSteamMatch": "Find a Steam Match",
+	"editorSteamMatchHelp": "Search Steam and select a result to check it. \"Use This Steam Match\" makes that Steam app the source of the game's metadata and links its community, news, controller layouts... Fields below can still be edited by hand. Press Save to apply. Browsing doesn't change anything.",
+	"editorSteamSearch": "Search Steam",
+	"editorSteamNoResults": "No Steam matches found, try another name or use the Steam App ID field below",
+	"editorSteamAppId": "Steam App ID",
+	"editorSteamAppIdDesc": "Steam App ID, or a Store, Community or SteamDB URL. Empty for no match",
+	"editorSteamCurrent": "current match",
+	"editorSteamSelected": "selected",
+	"editorSteamType": "Steam type: {type}, check that this is the game or edition you want",
+	"editorSteamUseMatch": "Use This Steam Match",
+	"editorSteamMatchSet": "Steam match selected, press Save to apply it",
+	"editorInvalidSteamAppId": "Invalid Steam App ID",
+	"providerCompatdataSteamMatch": "Steam Match",
+	"editorSteamCompat": "Use the Steam Match's Compatibility",
+	"editorSteamCompatDesc": "Valve's Steam Deck rating and test results of the matched Steam game. Turn off to keep MetaDeck's compatibility (emulator lists, EmuDeck...) for this game"
 }

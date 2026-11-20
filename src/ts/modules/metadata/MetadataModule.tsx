@@ -45,6 +45,14 @@ import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleD
 import type { ProviderIdentifier } from "../Provider";
 import { DBoxMetadataProvider, type DBoxMetadataProviderCache, type DBoxMetadataProviderConfig } from "./providers/DBoxMetadataProvider";
 
+/** Whether the library page of this app is shown: /library/app/:appid, /library/details/:appid, /library/:collection/app/:appid */
+function isGameDetailRouteOf(appId: number): boolean{
+	// @ts-ignore
+	const path: string | undefined = Router?.WindowStore?.GamepadUIMainWindowInstance?.m_history?.location?.pathname;
+	const match = path?.match(/^\/library(?:\/[^/]+)?\/(?:app|details)\/(\d+)(?:\/|$)/);
+	return !!match && Number(match[1]) === appId;
+}
+
 // Fields that can be edited by hand on the "Change Metadata" page
 export type MetadataManualOverride = Partial<Pick<MetadataData,
 	"description" | "developers" | "publishers" | "release_date" | "rating" | "store_categories">>;
@@ -62,7 +70,10 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	install_date: boolean,
 	// Manual edits, applied field by field over the provider data.
 	// Kept in the config so they survive cache clears and provider changes.
-	manual_overrides: Record<number, MetadataManualOverride>
+	manual_overrides: Record<number, MetadataManualOverride>,
+	// Steam app matched by hand to a shortcut ("Find a Steam Match"), for Steam-backed features
+	// (community, news...). Independent from the metadata provider.
+	steam_matches: Record<number, number>
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
@@ -125,6 +136,23 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		await this.saveConfig();
 
 		await this.refreshApp(appId);
+	}
+
+	getSteamMatch(appId: number): number | undefined
+	{
+		return this.config.steam_matches?.[appId];
+	}
+
+	/** Saves (or removes, with undefined) the Steam app matched to a shortcut */
+	async setSteamMatch(appId: number, steamAppId: number | undefined): Promise<void>
+	{
+		const matches = { ...(this.config.steam_matches ?? {}) };
+		if (steamAppId)
+			matches[appId] = steamAppId;
+		else
+			delete matches[appId];
+		this.config.steam_matches = matches;
+		await this.saveConfig();
 	}
 
 	/** Provider data only, without manual edits */
@@ -395,6 +423,17 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 							// @ts-ignore
 							if (Router?.WindowStore?.GamepadUIMainWindowInstance?.m_history?.location?.pathname === '/library/home'){
+								if(!module.excludedApps.includes(overview.appid))
+									return false;
+								else
+									return ret;
+							}
+
+							// On this game's own page always look like a Steam game, even within a truth window opened
+							// by another caller (GetPerClientData, BHasRecentlyLaunched): coming back to the page (e.g. from
+							// Change Metadata) otherwise made Game Info fall back to "non-Steam game or mod".
+							// Inside GetGameID/GetPrimaryAppID (-1) the real answer is still given: launching needs it.
+							if (module.bypassCounter !== -1 && isGameDetailRouteOf(overview.appid)){
 								if(!module.excludedApps.includes(overview.appid))
 									return false;
 								else
