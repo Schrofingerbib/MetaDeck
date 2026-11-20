@@ -30,6 +30,9 @@ export interface MetadataData extends EntryData{
 	install_date?: number;
 
 	store_categories?: (StoreCategory | CustomStoreCategory)[];
+
+	// Search results only, shown on the "Change Metadata" page to tell versions apart
+	platforms?: string[];
 }
 
 export interface CompatdataData extends EntryData{

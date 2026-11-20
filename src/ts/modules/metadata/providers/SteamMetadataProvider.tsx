@@ -230,6 +230,22 @@ export class SteamMetadataProvider extends FuzzySearchMetadataProvider<"steam">{
 	}
 
 	// Missing release_date
+	// Search results are already complete, this only fills entries made from an ID alone (ID overrides)
+	protected override async enrichMetadataForGame(_appId: number, game: MetadataData): Promise<void>{
+		if (game.description)
+			return;
+
+		const steamId = Number(game.id);
+		if (!Number.isFinite(steamId) || steamId <= 0)
+			return;
+
+		const data = await this.getAppMetadata(steamId);
+		if (data)
+			Object.assign(game, data, {
+				store_categories: (game.store_categories ?? []).concat(data.store_categories ?? [])
+			});
+	}
+
 	public async getAppMetadata(appId: number): Promise<MetadataData | undefined>{
 		// Currency code is required otherwise some entries are not returned successfully for some languages...
 		let response = await fetchNoCorsLegacyTimeout(

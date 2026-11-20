@@ -1,5 +1,5 @@
 import { callable } from "@decky/api";
-import type { EntryData, IDDictionary, MetadataData } from "../../../Interfaces";
+import type { EntryData, ID, IDDictionary, MetadataData } from "../../../Interfaces";
 import type Logger from "../../../logger";
 import { getLaunchCommand, getShortcutCategories, isEmulatedGame, romRegex } from "../../../shortcuts";
 import { closestWithLimit, getAppDetails } from "../../../util";
@@ -61,6 +61,30 @@ export abstract class FuzzySearchMetadataProvider<Identifier extends "steam" | "
 
 	protected abstract search(title: string): Promise<MetadataData[]>;
 
+	/** Free-text search, for the "Change Metadata" page */
+	public searchByQuery(query: string): Promise<MetadataData[]>{
+		return this.throttle(() => this.search(query));
+	}
+
+	/** Full data of a search result (an enriched copy) */
+	public async getResultDetails(appId: number, entry: MetadataData): Promise<MetadataData>{
+		const game = { ...entry };
+		await this.throttle(() => this.enrichMetadataForGame(appId, game));
+		return game;
+	}
+
+	/** Pins (or unpins, with undefined) a result ID for an app, like the ID override settings */
+	public async setOverride(appId: number, id: ID | undefined): Promise<void>{
+		const oldValue = this.overrides;
+		const newValue = { ...oldValue };
+		if (id === undefined)
+			delete newValue[appId];
+		else
+			newValue[appId] = id;
+		this.overrides = newValue;
+		await this.onOverridesChange(oldValue, newValue);
+	}
+
 	// Used to retrieve initial data for all the results in search and more specific data here if needed
 	protected enrichMetadataForGame(_appId: number, _game: MetadataData): Promise<void>{
 		return Promise.resolve();
@@ -89,12 +113,12 @@ export abstract class FuzzySearchMetadataProvider<Identifier extends "steam" | "
 		this.logger.debug(`Fetching metadata for game ${appId}`);
 
 		const results = await this.getAllMetadataForGame(appId);
-		if (!results.length)
+		const data_id = this.overrides[appId];
+		// With an ID override the shortcut name search doesn't need to find anything
+		if (!results.length && data_id === undefined)
 			return undefined;
 
 		this.logger.debug("Results", results);
-
-		const data_id = this.overrides[appId];
 		this.logger.debug("data_id", data_id);
 
 		let games: MetadataData[];
@@ -104,8 +128,13 @@ export abstract class FuzzySearchMetadataProvider<Identifier extends "steam" | "
 			this.logger.debug(games[0]?.title ?? "", results.map(value => value.title));
 			this.logger.debug("Games", games);
 		}
-		else
+		else{
 			games = results.filter(value => value.id === data_id);
+			// Picked from a free-text search: not among the results for the shortcut name,
+			// start from the ID alone and let enrichMetadataForGame retrieve the rest
+			if (!games.length)
+				games = [{ id: data_id, title: details.strDisplayName, description: '', store_categories: [] }];
+		}
 
 		const game = games[0];
 		if (game){

@@ -125,6 +125,9 @@ export class RAWGMetadataProvider extends FuzzySearchMetadataProvider<"rawg">{
 					released?: string; // yyyy-MM-dd
 					metacritic?: number;
 					id: number;
+					platforms?: {
+						platform?: { name?: string; };
+					}[];
 					tags?: {
 						slug: string;
 						language: string; // eng
@@ -168,6 +171,7 @@ export class RAWGMetadataProvider extends FuzzySearchMetadataProvider<"rawg">{
 				
 				rating: i.metacritic,
 				release_date: i.released ? Math.floor(new Date(i.released).getTime() / 1000) : undefined,
+				platforms: i.platforms?.map(p => p.platform?.name).filter((name): name is string => !!name),
 				store_categories: i.tags
 					?.map(t => tagsMatching[t.slug])
 					.filter(t => t)
