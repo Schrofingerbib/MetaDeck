@@ -18,7 +18,7 @@ const logger = new Logger("steam_match");
 const noPatch = { unpatch(){} } as Patch;
 
 /** The Steam game matched to a shortcut, when it stands in for it */
-function matchedApp(state: MetaDeckState, appId: unknown): number | undefined{
+export function matchedApp(state: MetaDeckState, appId: unknown): number | undefined{
 	const id = Number(appId);
 	if (!Number.isInteger(id) || id <= 0)
 		return undefined;

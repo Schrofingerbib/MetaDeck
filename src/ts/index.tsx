@@ -14,6 +14,7 @@ import {ProviderSettingsComponent} from "./modules/ProviderSettingsComponent";
 import {MetadataEditor} from "./modules/metadata/MetadataEditor";
 import contextMenuPatch from "./contextMenuPatch";
 import {activityPatch, communityFeedPatch, controllerLayoutsPatch} from "./steamMatchFeatures";
+import {Trailers} from "./trailers";
 import {SteamAppTypeShortcut} from "./Interfaces";
 import type {  CachedAppDetails } from "@decky/ui/dist/globals/steam-client/App";
 
@@ -142,6 +143,9 @@ export default definePlugin(() => {
 	mounts.addPatchMount(communityFeedPatch(state));
 	mounts.addPatchMount(activityPatch(state));
 	mounts.addPatchMount(controllerLayoutsPatch(state));
+
+	// Trailers on game pages, after the settings are read
+	mounts.addMount(new Trailers(state));
 	
 	state.loadingData.total = 0;
 	const unregister = mounts.register(state.settings);
