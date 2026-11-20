@@ -21,3 +21,16 @@ Ported components:
   (https://github.com/beallio/Decky-UI-Restored), GPL-3.0-or-later. Supplies
   the missing onSeek callback so Steam's own mini achievements row renders on
   the Gaming Mode game page (ValveSoftware/steam-for-linux#13540).
+
+- src/ts/gamepadTextArea.ts
+  From src/steam/gamepadTextArea.ts (v0.6.4). Resolves Steam's gamepad-aware
+  textarea so multiline fields receive on-screen keyboard input.
+
+- src/ts/contextMenuPatch.tsx
+  The context menu patching technique, from src/contextMenuPatch.tsx (v0.6.4),
+  itself derived from decky-steamgriddb by the SteamGridDB project
+  (https://github.com/SteamGridDB/decky-steamgriddb), GPL-3.0.
+
+The "Change Metadata" page (src/ts/modules/metadata/MetadataEditor.tsx) is a
+new implementation for MetaDeck, modelled on Decky Metadata's metadata editor
+(its "Source" fields and "Steam info fields").

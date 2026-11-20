@@ -65,10 +65,11 @@ export class Mounts implements AsyncMountable{
 		})
 	}
 
-	addPageMount(path: string, component: ComponentType, props?: Omit<RouteProps, 'path' | 'children'>): void {
+	// Steam's router is react-router v5: "exact" works at runtime but is missing from the v6 types installed here
+	addPageMount(path: string, component: ComponentType, props?: Omit<RouteProps, 'path' | 'children'> & { exact?: boolean }): void {
 		this.addMount({
 			mount(): void {
-				routerHook.addRoute(path, component, props)
+				routerHook.addRoute(path, component, props as Omit<RouteProps, 'path' | 'children'>)
 			},
 			dismount(): void {
 				routerHook.removeRoute(path)

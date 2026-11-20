@@ -11,6 +11,9 @@ import {EventBus} from "./events";
 import {staticClasses} from "@decky/ui";
 import {SettingsComponent} from "./modules/SettingsComponent";
 import {ProviderSettingsComponent} from "./modules/ProviderSettingsComponent";
+import {MetadataEditor} from "./modules/metadata/MetadataEditor";
+import contextMenuPatch from "./contextMenuPatch";
+import {SteamAppTypeShortcut} from "./Interfaces";
 import type {  CachedAppDetails } from "@decky/ui/dist/globals/steam-client/App";
 
 configure({isolateGlobalState: true});
@@ -111,11 +114,27 @@ export default definePlugin(() => {
 		</MetaDeckStateContextProvider>
 	);
 
+	// Exact, otherwise it also matches the deeper pages below
 	mounts.addPageMount("/metadeck/:module", () =>
 		<MetaDeckStateContextProvider metaDeckState={state}>
 			<ProviderSettingsComponent/>
-		</MetaDeckStateContextProvider>
+		</MetaDeckStateContextProvider>,
+		{ exact: true }
 	);
+
+	// "Change Metadata..." page, opened from the game context menu
+	mounts.addPageMount("/metadeck/edit/:appid", () =>
+		<MetaDeckStateContextProvider metaDeckState={state}>
+			<MetadataEditor/>
+		</MetaDeckStateContextProvider>,
+		{ exact: true }
+	);
+
+	mounts.addMount(contextMenuPatch((appId) =>
+		state.modules.metadata.isValid &&
+		appStore.GetAppOverviewByAppID(appId)?.app_type === SteamAppTypeShortcut &&
+		!state.modules.metadata.excludedApps.includes(appId)
+	));
 	
 	state.loadingData.total = 0;
 	const unregister = mounts.register(state.settings);

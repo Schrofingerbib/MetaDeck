@@ -45,6 +45,10 @@ import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleD
 import type { ProviderIdentifier } from "../Provider";
 import { DBoxMetadataProvider, type DBoxMetadataProviderCache, type DBoxMetadataProviderConfig } from "./providers/DBoxMetadataProvider";
 
+// Fields that can be edited by hand on the "Change Metadata" page
+export type MetadataManualOverride = Partial<Pick<MetadataData,
+	"description" | "developers" | "publishers" | "release_date" | "rating" | "store_categories">>;
+
 export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	type_override: boolean,
 	descriptions: boolean,
@@ -55,7 +59,10 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	title_header: boolean,
 	rating: boolean,
 	install_size: boolean,
-	install_date: boolean
+	install_date: boolean,
+	// Manual edits, applied field by field over the provider data.
+	// Kept in the config so they survive cache clears and provider changes.
+	manual_overrides: Record<number, MetadataManualOverride>
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
@@ -100,6 +107,72 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		new RAWGMetadataProvider(this),
 		new RetroAchievementsMetadataProvider(this)
 	];
+
+	getManualOverride(appId: number): MetadataManualOverride | undefined
+	{
+		return this.config.manual_overrides?.[appId];
+	}
+
+	/** Saves (or removes, if empty) the manual edits of an app and applies them to Steam */
+	async setManualOverride(appId: number, override: MetadataManualOverride | undefined): Promise<void>
+	{
+		const overrides = { ...(this.config.manual_overrides ?? {}) };
+		if (override && Object.keys(override).length)
+			overrides[appId] = override;
+		else
+			delete overrides[appId];
+		this.config.manual_overrides = overrides;
+		await this.saveConfig();
+
+		await this.refreshApp(appId);
+	}
+
+	/** Provider data only, without manual edits */
+	getProviderData(appId: number): MetadataData | undefined
+	{
+		return super.getCachedData(appId);
+	}
+
+	protected override getCachedData(appId: number): MetadataData | undefined
+	{
+		const data = super.getCachedData(appId);
+		const manual = this.getManualOverride(appId);
+		if (!manual || !Object.keys(manual).length)
+			return data;
+
+		// Manual edits win over the provider, field by field
+		return {
+			...(data ?? {
+				id: appId,
+				title: appStore.GetAppOverviewByAppID(appId)?.display_name ?? "",
+				description: ""
+			}),
+			...manual
+		};
+	}
+
+	public override hasCachedData(appId: number): boolean
+	{
+		// Provider data only: manual edits must not prevent fetching it
+		return super.getCachedData(appId) !== undefined;
+	}
+
+	/** Applies the current (merged) data again to Steam, e.g. after a manual edit */
+	async refreshApp(appId: number): Promise<void>
+	{
+		const appData = appDetailsStore.GetAppData(appId);
+		if (appData){
+			// Associations are only built when missing: drop them so they are built again
+			stateTransaction(() => {
+				(appData as any).associationData = undefined;
+			});
+			// Patched above: rebuilding them applies the merged data
+			(appDetailsStore as any).GetDescriptions(appId);
+			(appDetailsStore as any).GetAssociations(appId);
+		}
+
+		await this.apply(appId);
+	}
 
 	override async removeCache(appId: number){
 		await super.removeCache(appId);
