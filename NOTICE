@@ -41,8 +41,11 @@ Ported components:
 
 - src/ts/steamMatchFeatures.ts
   The community feed of a matched Steam game: same "appcommunityfeed" URL
-  rewrite as src/communityFeedUrl.ts (v0.6.4). Its Activity part is a new
-  implementation (Steam's own activity store loads the matched game).
+  rewrite as src/communityFeedUrl.ts (v0.6.4). Its controller layouts follow
+  src/steam/controllerLayouts.ts (v0.6.4): the matched game's layouts are
+  queried with the shortcut's and added to the chooser's official, recommended
+  template and community lists. Its Activity part is a new implementation
+  (Steam's own activity store loads the matched game).
 
 - src/ts/modules/compatdata/providers/SteamMatchCompatdataProvider.tsx
   Valve's compatibility of the matched Steam app: same store report

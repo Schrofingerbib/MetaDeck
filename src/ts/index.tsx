@@ -13,7 +13,7 @@ import {SettingsComponent} from "./modules/SettingsComponent";
 import {ProviderSettingsComponent} from "./modules/ProviderSettingsComponent";
 import {MetadataEditor} from "./modules/metadata/MetadataEditor";
 import contextMenuPatch from "./contextMenuPatch";
-import {activityPatch, communityFeedPatch} from "./steamMatchFeatures";
+import {activityPatch, communityFeedPatch, controllerLayoutsPatch} from "./steamMatchFeatures";
 import {SteamAppTypeShortcut} from "./Interfaces";
 import type {  CachedAppDetails } from "@decky/ui/dist/globals/steam-client/App";
 
@@ -141,6 +141,7 @@ export default definePlugin(() => {
 	// A shortcut matched to a Steam game shows that game's Community tab and Activity
 	mounts.addPatchMount(communityFeedPatch(state));
 	mounts.addPatchMount(activityPatch(state));
+	mounts.addPatchMount(controllerLayoutsPatch(state));
 	
 	state.loadingData.total = 0;
 	const unregister = mounts.register(state.settings);
