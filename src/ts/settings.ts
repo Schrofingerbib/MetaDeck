@@ -211,6 +211,7 @@ export class Settings
 				app_details: true,
 				overlay_menu: true,
 				dlc_ribbon: true,
+				mini_achievements: true,
 				excluded_apps: [],
 				providers_overrides: {},
 				providers: {
