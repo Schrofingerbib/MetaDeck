@@ -13,6 +13,7 @@ import {SettingsComponent} from "./modules/SettingsComponent";
 import {ProviderSettingsComponent} from "./modules/ProviderSettingsComponent";
 import {MetadataEditor} from "./modules/metadata/MetadataEditor";
 import contextMenuPatch from "./contextMenuPatch";
+import {activityPatch, communityFeedPatch} from "./steamMatchFeatures";
 import {SteamAppTypeShortcut} from "./Interfaces";
 import type {  CachedAppDetails } from "@decky/ui/dist/globals/steam-client/App";
 
@@ -133,9 +134,13 @@ export default definePlugin(() => {
 	mounts.addMount(contextMenuPatch((appId) =>
 		state.modules.metadata.isValid &&
 		appStore.GetAppOverviewByAppID(appId)?.app_type === SteamAppTypeShortcut &&
-		// Software apps (software) can be edited even before they have manual edits
+		// Software apps can be edited even before they have manual edits
 		(!state.modules.metadata.excludedApps.includes(appId) || state.modules.metadata.isSoftware(appId))
 	));
+
+	// A shortcut matched to a Steam game shows that game's Community tab and Activity
+	mounts.addPatchMount(communityFeedPatch(state));
+	mounts.addPatchMount(activityPatch(state));
 	
 	state.loadingData.total = 0;
 	const unregister = mounts.register(state.settings);
