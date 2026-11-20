@@ -23,7 +23,6 @@ import type { FuzzySearchMetadataProvider } from "./providers/FuzzySearchMetadat
 import type { LizardByteGameDBMetadataProvider } from "./providers/LizardByteGameDBMetadataProvider";
 import { fetchIgn, searchIgn } from "./IgnSearch";
 import { getSteamMatchPreview, parseSteamAppId, searchSteamStore, type SteamMatchCandidate, type SteamMatchPreview } from "./SteamMatch";
-import { getDeckyMetadataSteamMatch, setDeckyMetadataSteamMatch } from "./DeckyMetadataBridge";
 import type { SteamMetadataProvider } from "./providers/SteamMetadataProvider";
 import type { FuzzySearchCompatdataProvider } from "../compatdata/providers/FuzzySearchCompatdataProvider";
 import type { RetroAchievementsAchievementsProvider, RetroAchievementsConsole, RetroAchievementsGame } from "../achievements/providers/RetroAchievementsAchievementsProvider";
@@ -256,17 +255,6 @@ export const MetadataEditor: FC = () => {
 	const [saved, setSaved] = useState<Draft>(currentDraft);
 	const [draft, setDraft] = useState<Draft>(saved);
 
-	// Without a MetaDeck Steam match yet, start from the one Decky Metadata has (it drives its community, news...)
-	useEffect(() => {
-		if (module.getSteamMatch(appId))
-			return;
-		void getDeckyMetadataSteamMatch(appId).then((steamAppId) => {
-			if (!steamAppId)
-				return;
-			setSaved((current) => ({ ...current, steamAppId: String(steamAppId) }));
-			setDraft((current) => current.steamAppId ? current : { ...current, steamAppId: String(steamAppId) });
-		});
-	}, [appId]);
 	const [manual, setManual] = useState(() => module.getManualOverride(appId));
 	const [saving, setSaving] = useState(false);
 
@@ -341,9 +329,6 @@ export const MetadataEditor: FC = () => {
 			}
 			if (steamChanged){
 				await module.setSteamMatch(appId, steamAppId);
-				// Decky Metadata's community, news, layouts and trailers follow the same match
-				await setDeckyMetadataSteamMatch(appId, steamAppId, name).catch((e) =>
-					module.logger.error("Decky Metadata Steam match update failed", e));
 				// The Steam match becomes the source of the game's metadata (manual edits stay on top);
 				// removing it goes back to the automatic provider if Steam was the source
 				await switchSource(steamAppId ? "steam" : undefined, steamAppId, "steam");
