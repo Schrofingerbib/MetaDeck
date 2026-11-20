@@ -1,6 +1,6 @@
 {
-	"name": "metadeck",
-	"version": "4.2.0",
+	"name": "metadeck-plus",
+	"version": "4.2.0-plus.1",
 	"description": "Plugin for viewing metadata for Non-Steam games. Part of the EmuDeck Project.",
 	"type": "module",
 	"scripts": {

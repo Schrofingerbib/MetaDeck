@@ -1,3 +1,24 @@
+# MetaDeck Plus
+
+A fork of [MetaDeck](https://github.com/EmuDeck/MetaDeck) with:
+
+- **"Change Metadata..." editor** (game context menu): edit the metadata fields and the title, search LizardByte, RAWG and IGN, find a Steam Match, choose the EmuDeck compatibility report and the RetroAchievements game.
+- **Steam Match features** for non-Steam games matched to a Steam game: its Community tab, its Activity (announcements), its controller layouts (official, recommended and community), and Deck compatibility.
+- **Game trailers** on game pages, over the artwork: the Steam trailer of Steam games and Steam Matches, else an IGN trailer. Optional audio, fade-in delay and hidden logo. X mutes the trailer, Y enlarges it.
+- **Software mode** for apps rather than games: Flathub metadata (automatic for Flatpaks, or linked by hand) and manual edits, without game providers, compatibility or achievements.
+- Fixes: stability and cache, RetroAchievements subsets, PCSX2 serials of `.chd` games, Game Info staying after editing, among others.
+
+Several features are ported from [Decky Metadata](https://github.com/beallio/Decky-Metadata) by beallio (GPL-3.0-or-later): see [NOTICE](NOTICE).
+
+### Install
+1. In Decky's settings, disable **MetaDeck** (and **Decky Metadata**, if installed): they patch the same Steam pages.
+2. Install the `MetaDeck-Plus.zip` of the [latest release](https://github.com/Schrofingerbib/MetaDeck/releases/latest). In Decky's Developer settings, use "Install Plugin from URL" with its link, or "Install Plugin from ZIP File".
+3. Restart Steam.
+
+On its first start, MetaDeck Plus copies MetaDeck's settings and cache. MetaDeck keeps its own copy, so it can still be used instead.
+
+---
+
 Decky Loader Steam Deck, Steam Machine and Steam Frame Plugin for viewing metadata, achievements (also supports achievement sets!) and compatibility for Non-Steam games inside your game's app page just like with Steam games.
 
 

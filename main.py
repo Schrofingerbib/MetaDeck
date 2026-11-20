@@ -1636,3 +1636,18 @@ class Plugin:
 		if os.path.exists(os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "metadeck.json")):
 			os.rename(os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "metadeck.json"),
 					os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json"))
+		# MetaDeck Plus is a plugin of its own: on its first start it takes MetaDeck's settings and cache.
+		# Copied, not moved, so MetaDeck keeps them and can still be used instead
+		for own_dir, metadeck_dir, name in (
+				(decky.DECKY_PLUGIN_SETTINGS_DIR, os.path.join(decky.DECKY_HOME, "settings", "MetaDeck"), "settings.json"),
+				(decky.DECKY_PLUGIN_RUNTIME_DIR, os.path.join(decky.DECKY_HOME, "data", "MetaDeck"), "cache.json")):
+			source = os.path.join(metadeck_dir, name)
+			target = os.path.join(own_dir, name)
+			if os.path.realpath(own_dir) == os.path.realpath(metadeck_dir) or os.path.exists(target) or not os.path.isfile(source):
+				continue
+			try:
+				os.makedirs(own_dir, exist_ok=True)
+				shutil.copy2(source, target)
+				decky.logger.info(f"Took MetaDeck's {name} ({source})")
+			except Exception as e:
+				decky.logger.error(f"Could not take MetaDeck's {name}: {e}")
