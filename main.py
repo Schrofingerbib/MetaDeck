@@ -1,5 +1,7 @@
+import asyncio
 import json
 import os
+import time
 import decky # type: ignore
 import pycdlib # type: ignore
 import subprocess
@@ -1288,19 +1290,49 @@ class Plugin:
 
 
 	gametdb = {} # url: { id: { game } }
+	gametdb_loaded_at = {} # filename: time.time()
 
 	async def gametdb_get_db(self, url: str) -> None:
 		# Support WaybackMachine
 		if 'https://www.gametdb.com/' not in url or not url.endswith('.zip'):
 			return
 
+		filename = url.split('/')[-1] # aaatdb.zip
+
+		# The backend outlives Steam restarts: don't download and parse again a database loaded recently
+		if filename in Plugin.gametdb and time.time() - Plugin.gametdb_loaded_at.get(filename, 0) < 24 * 60 * 60:
+			return
+
+		# Downloading and parsing take tens of seconds and are blocking: run them in a thread,
+		# so the other backend calls (ROM hashing, other providers...) are not stuck meanwhile
+		Plugin.gametdb[filename] = await asyncio.to_thread(Plugin._gametdb_download_and_parse, url, filename)
+		Plugin.gametdb_loaded_at[filename] = time.time()
+
+	@staticmethod
+	def _gametdb_download_and_parse(url: str, filename: str) -> dict:
 		result = {}
 
-		filename = url.split('/')[-1] # aaatdb.zip
 		ssl_backup = ssl._create_default_https_context
 		ssl._create_default_https_context = get_ssl_context
-		temp_filename = urllib.request.urlretrieve(url)[0]
-		ssl._create_default_https_context = ssl_backup
+		try:
+			temp_filename = urllib.request.urlretrieve(url)[0]
+		finally:
+			ssl._create_default_https_context = ssl_backup
+
+		try:
+			result = Plugin._gametdb_parse(temp_filename, filename)
+		finally:
+			# urlretrieve leaves the temporary file behind
+			try:
+				os.remove(temp_filename)
+			except OSError:
+				pass
+
+		return result
+
+	@staticmethod
+	def _gametdb_parse(temp_filename: str, filename: str) -> dict:
+		result = {}
 
 		with zipfile.ZipFile(temp_filename, 'r') as zip_ref:
 			xml_bytes = zip_ref.read(filename.replace('.zip', '.xml'))
@@ -1345,7 +1377,7 @@ class Plugin:
 					'controls': controls if len(controls) > 0 else None
 				}
 
-		Plugin.gametdb[filename] = result
+		return result
 
 	async def gametdb_get_entry(self, url: str, id: str) -> str | None:
 		filename = url.split('/')[-1] # aaatdb.zip
