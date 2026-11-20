@@ -18,7 +18,7 @@ export interface IgnSearchResult {
 	rating?: number;
 }
 
-async function graphql(query: string, variables: Record<string, unknown>): Promise<any> {
+export async function graphql(query: string, variables: Record<string, unknown>): Promise<any> {
 	const response = await fetchNoCors(IGN_GRAPHQL_URL, {
 		method: "POST",
 		headers: {

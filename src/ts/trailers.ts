@@ -1,5 +1,6 @@
 // Game trailers on a game's page, over its header artwork: the Steam trailer of a Steam game, or of the Steam game
-// matched to a shortcut ("Find a Steam Match" on the "Change Metadata" page). The artwork stays when there is none.
+// matched to a shortcut ("Find a Steam Match" on the "Change Metadata" page), else an IGN trailer of the game found by
+// its title (ignTrailers.ts). The artwork stays when there is none.
 //
 // Ported from Decky Metadata v0.6.4 (src/trailers) by beallio:
 //   https://github.com/beallio/Decky-Metadata
@@ -12,6 +13,8 @@ import { appDetailsHeaderClasses, findModuleExport, Router } from "@decky/ui";
 import type { MetaDeckState } from "./MetaDeckState";
 import type { Mountable } from "./System";
 import { matchedApp } from "./steamMatchFeatures";
+import { ignTrailer } from "./ignTrailers";
+import { SteamAppTypeShortcut } from "./Interfaces";
 import { fetchNoCorsLegacyTimeout } from "./util";
 import { t } from "./useTranslations";
 import { defaultTrailerSettings, type TrailerSettings } from "./trailerSettings";
@@ -28,9 +31,9 @@ const BUTTON_Y = 4;
 
 const FADE_MS = 800;
 
-type Trailer = { name: string; dash: string };
+type Trailer = { name: string; dash?: string; mp4?: string }; // A DASH stream (Steam) or an MP4 file (IGN)
 
-const trailers = new Map<number, Promise<Trailer | null>>();
+const trailers = new Map<number, Promise<Trailer | null>>(); // By Steam app
 
 /** A Steam game's trailer: the highlighted one, else the first one */
 function steamTrailer(steamAppId: number): Promise<Trailer | null>{
@@ -58,6 +61,32 @@ function trailerSource(state: MetaDeckState, appId: number): number | undefined{
 	return matchedApp(state, appId);
 }
 
+/** A page's trailer: the Steam one, else IGN's by the game's title (not for software, nor for apps MetaDeck leaves out) */
+async function findTrailer(state: MetaDeckState, appId: number): Promise<{ trailer: Trailer; source: string } | undefined>{
+	const steamAppId = trailerSource(state, appId);
+	if (steamAppId){
+		const trailer = await steamTrailer(steamAppId).catch((e) => {
+			logger.debug(`Steam trailers of ${steamAppId} failed`, e);
+			return null;
+		});
+		if (trailer)
+			return { trailer, source: `Steam app ${steamAppId}` };
+	}
+
+	const overview = appStore.GetAppOverviewByAppID(appId);
+	const metadata = state.modules.metadata;
+	if (overview?.app_type === SteamAppTypeShortcut &&
+		(!metadata?.isValid || metadata.excludedApps.includes(appId) || metadata.isSoftware(appId)))
+		return undefined;
+	if (overview?.app_type !== STEAM_APP_TYPE_GAME && overview?.app_type !== SteamAppTypeShortcut)
+		return undefined;
+	const trailer = await ignTrailer(appId, overview.display_name).catch((e) => {
+		logger.debug(`IGN trailers of ${appId} failed`, e);
+		return null;
+	});
+	return trailer ? { trailer, source: "IGN" } : undefined;
+}
+
 /** The game page's app: "/library/app/<appid>", not its subpages */
 function pageApp(pathname: string | undefined): number | undefined{
 	const appId = Number(pathname?.match(/^\/library\/app\/(\d+)\/?$/)?.[1]);
@@ -79,7 +108,7 @@ class Playback{
 	private readonly doc: Document;
 	private readonly container: HTMLDivElement;
 	private readonly video: HTMLVideoElement;
-	private readonly player: any;
+	private readonly player?: any; // Steam's DASH player, for Steam trailers
 	private readonly timers: number[] = [];
 	private readonly hints: HTMLElement[] = [];
 	private header: HTMLElement;
@@ -113,14 +142,20 @@ class Playback{
 			this.ready = true;
 			this.reveal();
 		});
-		for (const event of ["ended", "valve-ended", "valve-playbackerror", "valve-downloadfailed"])
+		for (const event of ["ended", "error", "valve-ended", "valve-playbackerror", "valve-downloadfailed"])
 			this.video.addEventListener(event, () => this.finish(event));
 
-		// Steam's player: buffers paused, plays when shown, picks the quality from the video's size
-		this.player = new Player(this.video);
-		this.player.SetUserPlayChoice(false);
-		this.player.SetMuteOnAutoplayBlocked?.(true);
-		this.player.PlayMPD(trailer.dash);
+		if (trailer.dash){
+			// Steam's player: buffers paused, plays when shown, picks the quality from the video's size
+			this.player = new Player(this.video);
+			this.player.SetUserPlayChoice(false);
+			this.player.SetMuteOnAutoplayBlocked?.(true);
+			this.player.PlayMPD(trailer.dash);
+		}
+		else{
+			this.video.preload = "auto";
+			this.video.src = trailer.mp4!;
+		}
 
 		this.timers.push(window.setTimeout(() => {
 			this.due = true;
@@ -134,7 +169,7 @@ class Playback{
 		if (this.closed || this.shown || !this.ready || !this.due)
 			return;
 		this.shown = true;
-		this.player.Play();
+		this.play();
 		this.container.style.opacity = "1";
 		if (this.settings.hide_logo){
 			this.hiddenLogos = [...this.doc.querySelectorAll<HTMLElement>(`.${appDetailsHeaderClasses.TitleImageContainer}`)];
@@ -191,7 +226,14 @@ class Playback{
 		this.header = header;
 		header.appendChild(this.container);
 		if (this.shown)
+			this.play();
+	}
+
+	private play(): void{
+		if (this.player)
 			this.player.Play();
+		else
+			this.video.play().catch((e) => logger.debug(`Trailer of ${this.appId} did not play`, e));
 	}
 
 	/** X and Y in Steam's footer, beside its own actions */
@@ -239,7 +281,13 @@ class Playback{
 		for (const logo of this.hiddenLogos)
 			logo.style.opacity = "";
 		try{
-			this.player.Close();
+			if (this.player)
+				this.player.Close();
+			else{
+				this.video.pause();
+				this.video.removeAttribute("src");
+				this.video.load(); // Stops the download
+			}
 		}
 		catch (e){
 			logger.debug("Trailer player close failed", e);
@@ -342,19 +390,10 @@ export class Trailers implements Mountable{
 	private async start(appId: number, visit: number): Promise<void>{
 		const settings = this.settings;
 		const showAt = Date.now() + Math.max(0, settings.delay) * 1000;
-		const steamAppId = trailerSource(this.state, appId);
-		if (!steamAppId)
+		const found = await findTrailer(this.state, appId);
+		if (!found || visit !== this.visit)
 			return;
-		let trailer: Trailer | null;
-		try{
-			trailer = await steamTrailer(steamAppId);
-		}
-		catch (e){
-			logger.debug(`No trailer for ${appId}`, e);
-			return;
-		}
-		if (!trailer)
-			return;
+		const { trailer, source } = found;
 
 		// The page may still be appearing
 		let header: HTMLElement | undefined;
@@ -367,7 +406,7 @@ export class Trailers implements Mountable{
 		if (!header || visit !== this.visit)
 			return;
 
-		logger.debug(`Trailer of ${appId} (Steam app ${steamAppId}): ${trailer.name}`);
+		logger.debug(`Trailer of ${appId} (${source}): ${trailer.name}`);
 		this.playback = new Playback(this.Player, appId, header, trailer, settings, showAt, () => {
 			if (visit === this.visit)
 				this.stop();

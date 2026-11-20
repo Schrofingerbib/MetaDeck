@@ -51,7 +51,14 @@ Ported components:
   Game trailers on a game's page: the Detail view of src/trailers (v0.6.4),
   with its fade-in delay, audio, hidden logo, X to mute, Y to enlarge and stop
   on launch. Steam trailers are played with Steam's own DASH player instead of
-  Decky Metadata's player; the Home view and the IGN fallback are not ported.
+  Decky Metadata's player; the Home view is not ported.
+
+- src/ts/ignTrailers.ts
+  The IGN fallback for games without a Steam trailer: the game is found by its
+  exact title as in backend-rust/src/providers/ign.rs (find_trailer), and its
+  trailer chosen with the rules of trailer_title_score. The trailers come from
+  IGN's GraphQL API instead of its web pages; console names may come before
+  the game's title, and merchandise and mods are rejected too.
 
 - src/ts/modules/compatdata/providers/SteamMatchCompatdataProvider.tsx
   Valve's compatibility of the matched Steam app: same store report
