@@ -185,6 +185,12 @@ export class AchievementsModule extends Module<"achievements", AchievementsProvi
 		}): any;
 	}
 
+	// Software apps (software) have no achievements
+	override get excludedApps(): number[]
+	{
+		return super.excludedApps.concat(this.state.modules.metadata?.softwareApps ?? []);
+	}
+
 	providers: AchievementsProvider<any>[] = [
 		new RetroAchievementsAchievementsProvider(this),
 		new RPCS3AchievementsProvider(this),

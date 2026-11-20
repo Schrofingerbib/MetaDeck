@@ -53,7 +53,7 @@ const EDITABLE_CATEGORIES: { category: StoreCategory; label: Parameters<typeof t
 const EDITABLE_CATEGORY_IDS = new Set<number>(EDITABLE_CATEGORIES.map((c) => c.category));
 
 // Search sources: LizardByte first (best for emulated games)
-type SearchSource = "lizardbyte" | "rawg" | "ign";
+type SearchSource = "lizardbyte" | "rawg" | "ign" | "flathub";
 
 type SearchResult = {
 	source: SearchSource;
@@ -78,10 +78,11 @@ type Draft = {
 	emudeckId: string; // EmuDeck list entry ("PS2 · Title"): empty for automatic, "0" for none
 	title: string; // The shortcut's name
 	raGameId: string; // RetroAchievements game: empty for automatic (ROM hash), "0" for none
+	software: boolean; // Software: only manual data, no providers, compatibility or achievements
 };
 
 // Draft fields saved elsewhere than in the manual metadata edits
-const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId", "title", "raGameId"];
+const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId", "title", "raGameId", "software"];
 
 const RA_MEDIA = "https://media.retroachievements.org";
 const achievementImageStyle = { width: 40, height: 40, borderRadius: 4, flexShrink: 0 } as const;
@@ -108,7 +109,7 @@ const sameList = (a: (string | number)[], b: (string | number)[]) =>
 const snippet = (text?: string, length = 160) =>
 	!text ? "" : text.length > length ? `${text.slice(0, length).trimEnd()}…` : text;
 
-type FuzzySource = "lizardbyte" | "rawg" | "steam";
+type FuzzySource = "lizardbyte" | "rawg" | "steam" | "flathub";
 
 function fuzzyProvider(module: MetadataModule, source: FuzzySource): FuzzySearchMetadataProvider<FuzzySource> | undefined {
 	return module.providers.find((provider) => provider.identifier === source) as FuzzySearchMetadataProvider<FuzzySource> | undefined;
@@ -122,7 +123,7 @@ const steamImageStyle = {
 	borderRadius: 4
 } as const;
 
-function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = "", title = "", raGameId = ""): Draft {
+function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = "", title = "", raGameId = "", software = false): Draft {
 	return {
 		description: data?.description ?? "",
 		developers: namesToText(data?.developers),
@@ -135,7 +136,8 @@ function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true,
 		steamCompat,
 		emudeckId,
 		title,
-		raGameId
+		raGameId,
+		software
 	};
 }
 
@@ -249,7 +251,7 @@ export const MetadataEditor: FC = () => {
 		return id === undefined ? "" : String(id);
 	};
 	const currentDraft = () => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat(), emudeckPin(),
-		appStore.GetAppOverviewByAppID(appId)?.display_name ?? "", raPin());
+		appStore.GetAppOverviewByAppID(appId)?.display_name ?? "", raPin(), module.isSoftware(appId));
 
 	const [saved, setSaved] = useState<Draft>(currentDraft);
 	const [draft, setDraft] = useState<Draft>(saved);
@@ -268,7 +270,7 @@ export const MetadataEditor: FC = () => {
 	const [manual, setManual] = useState(() => module.getManualOverride(appId));
 	const [saving, setSaving] = useState(false);
 
-	const managed = overview?.app_type === SteamAppTypeShortcut && !module.excludedApps.includes(appId);
+	const managed = overview?.app_type === SteamAppTypeShortcut && (!module.excludedApps.includes(appId) || module.isSoftware(appId));
 	const provider = module.getProviderData(appId);
 	const providerId = module.dataProviders[appId];
 	const changes = changedFields(draft, saved);
@@ -309,6 +311,25 @@ export const MetadataEditor: FC = () => {
 				// Steam updates the app's name shortly after: wait for it before reloading the page
 				for (let i = 0; i < 20 && appStore.GetAppOverviewByAppID(appId)?.display_name !== title; i++)
 					await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			if (changes.includes("software")){
+				// Saved after the manual edits: an app with them is no longer excluded
+				await module.setSoftware(appId, draft.software);
+				// A source chosen for the other kind (a game provider, or Flathub) no longer applies
+				const overrides: Record<number, string> = { ...module.providerOverrides };
+				if (overrides[appId] && (overrides[appId] === "flathub") !== draft.software){
+					delete overrides[appId];
+					module.providerOverrides = overrides as typeof module.providerOverrides;
+				}
+				// Forget (or fetch again) the provider data, then the compatibility and achievements
+				await module.onExcludedChange([], [appId]);
+				await module.fetchDataAsync(appId);
+				await module.refreshApp(appId);
+				for (const other of [state.modules.compatdata, state.modules.achievements]){
+					await other.onExcludedChange([], [appId]);
+					await other.fetchDataAsync(appId);
+					await other.apply(appId);
+				}
 			}
 			if (changes.includes("raGameId")){
 				await raProvider()?.setOverride(appId, draft.raGameId === "" ? undefined : Number(draft.raGameId));
@@ -392,12 +413,21 @@ export const MetadataEditor: FC = () => {
 	};
 
 	// Search
-	const sources = ([
-		{ data: "lizardbyte", label: fuzzyProvider(module, "lizardbyte")?.title ?? "LizardByte", valid: !!fuzzyProvider(module, "lizardbyte")?.isValid },
-		{ data: "rawg", label: fuzzyProvider(module, "rawg")?.title ?? "RAWG", valid: !!fuzzyProvider(module, "rawg")?.isValid },
-		{ data: "ign", label: "IGN", valid: true }
-	] as { data: SearchSource; label: string; valid: boolean }[]).filter((source) => source.valid);
+	// Software: Flathub; games: the game sources
+	const sources = ((draft.software ?
+		[{ data: "flathub", label: fuzzyProvider(module, "flathub")?.title ?? "Flathub", valid: !!fuzzyProvider(module, "flathub")?.isValid }] :
+		[
+			{ data: "lizardbyte", label: fuzzyProvider(module, "lizardbyte")?.title ?? "LizardByte", valid: !!fuzzyProvider(module, "lizardbyte")?.isValid },
+			{ data: "rawg", label: fuzzyProvider(module, "rawg")?.title ?? "RAWG", valid: !!fuzzyProvider(module, "rawg")?.isValid },
+			{ data: "ign", label: "IGN", valid: true }
+		]) as { data: SearchSource; label: string; valid: boolean }[]).filter((source) => source.valid);
 	const [searchSource, setSearchSource] = useState<SearchSource>(sources[0]?.data ?? "ign");
+	// Switching between game and software changes the sources
+	useEffect(() => {
+		setSearchSource(sources[0]?.data ?? "ign");
+		setResults(undefined);
+		setSelected(undefined);
+	}, [draft.software]);
 	const [query, setQuery] = useState(name);
 	const [results, setResults] = useState<SearchResult[] | undefined>(undefined);
 	const [selected, setSelected] = useState<{ result: SearchResult; details?: MetadataData } | undefined>(undefined);
@@ -731,7 +761,8 @@ export const MetadataEditor: FC = () => {
 		</div>;
 	const isEdited = (key: keyof MetadataManualOverride) => manual?.[key] !== undefined;
 
-	const sourceLabel = providerId ? `${t("editorSource")} · ${providerId}` : `${t("editorSource")} · ${t("editorSourceNone")}`;
+	const sourceLabel = providerId ? `${t("editorSource")} · ${providerId}` :
+		`${t("editorSource")} · ${draft.software ? t("editorSoftwareSource") : t("editorSourceNone")}`;
 
 	return (
 		<ScrollPanel>
@@ -769,6 +800,17 @@ export const MetadataEditor: FC = () => {
 							</DialogButton>
 						</div>
 
+						<PanelSection>
+							<PanelSectionRow>
+								<ToggleField
+									label={t("editorSoftware")}
+									description={t("editorSoftwareDesc")}
+									checked={draft.software}
+									onChange={(checked) => update({ software: checked })}/>
+							</PanelSectionRow>
+						</PanelSection>
+
+						{!draft.software && <>
 						<PanelSection title={t("editorSteamMatch")}>
 							<PanelSectionRow>
 								<div style={compactTextStyle}>{t("editorSteamMatchHelp")}</div>
@@ -828,6 +870,7 @@ export const MetadataEditor: FC = () => {
 									<TextField value={draft.steamAppId} description={t("editorSteamAppIdDesc")} onChange={(e) => update({ steamAppId: e.target.value })}/>)}
 							</PanelSectionRow>
 						</PanelSection>
+						</>}
 
 						<PanelSection title={t("editorSearchSection")}>
 							<PanelSectionRow>
@@ -934,6 +977,7 @@ export const MetadataEditor: FC = () => {
 							</PanelSectionRow>
 						</PanelSection>
 
+						{!draft.software && <>
 						<PanelSection title={t("editorCompatSection")}>
 							<PanelSectionRow>
 								<div style={compactTextStyle}>{`${t("editorCompatCurrent")}: ${compatCurrent}`}</div>
@@ -1134,6 +1178,7 @@ export const MetadataEditor: FC = () => {
 									</PanelSectionRow>
 								</>}
 						</PanelSection>
+						</>}
 					</>}
 			</Focusable>
 		</ScrollPanel>

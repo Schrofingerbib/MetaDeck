@@ -63,6 +63,12 @@ export class CompatdataModule extends Module<"compatdata", CompatdataProvider<an
 
 	logger = new Logger(this.identifier);
 
+	// Software apps (software) have no compatibility
+	override get excludedApps(): number[]
+	{
+		return super.excludedApps.concat(this.state.modules.metadata?.softwareApps ?? []);
+	}
+
 	providers: CompatdataProvider<any>[] = [
 		// First: a Steam match replaces the emulator compatibility (unless the app is excluded from it)
 		new SteamMatchCompatdataProvider(this),

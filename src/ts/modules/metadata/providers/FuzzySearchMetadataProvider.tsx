@@ -21,7 +21,7 @@ export interface FuzzySearchMetadataProviderCache extends ProviderCache{
 
 }
 
-export abstract class FuzzySearchMetadataProvider<Identifier extends "steam" | "rawg" | "lizardbyte">
+export abstract class FuzzySearchMetadataProvider<Identifier extends "steam" | "rawg" | "lizardbyte" | "flathub">
 	extends MetadataProvider<Identifier>{
 
 	abstract logger: Logger;

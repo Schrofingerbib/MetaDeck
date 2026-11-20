@@ -120,6 +120,7 @@
 	"providerMetadataGOG": "GOG",
 	"providerMetadataGameTDB": "GameTDB",
 	"providerMetadataLizardByteGameDB": "LizardByte GameDB",
+	"providerMetadataFlathub": "Flathub",
 	"providerMetadataRAWG": "RAWG",
 	"providerMetadataSteam": "Steam",
 	"providerMetadataTitleDb": "titledb",
@@ -341,5 +342,8 @@
 	"editorRaUse": "Use This Game",
 	"editorRaSet": "Game selected, press Save to apply it",
 	"editorRaAchievements": "{count} achievements · {points} points",
-	"editorRaProgress": "Your progress: {unlocked}/{total}"
+	"editorRaProgress": "Your progress: {unlocked}/{total}",
+	"editorSoftware": "Software",
+	"editorSoftwareDesc": "For apps and tools rather than games: Flathub (automatic for Flatpak apps, or the entry chosen below) and what is written here. No game providers, compatibility or achievements",
+	"editorSoftwareSource": "Manual"
 }

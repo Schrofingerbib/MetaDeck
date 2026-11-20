@@ -39,6 +39,7 @@ import { useMetaDeckState } from "../../MetaDeckState";
 import React from "react";
 import { GameTDBMetadataProvider, type GameTDBMetadataProviderCache, type GameTDBMetadataProviderConfig } from "./providers/GameTDBMetadataProvider";
 import { LizardByteGameDBMetadataProvider, LizardByteGameDBMetadataProviderCache, LizardByteGameDBMetadataProviderConfig } from "./providers/LizardByteGameDBMetadataProvider";
+import { FlathubMetadataProvider, getFlatpakAppId, type FlathubMetadataProviderCache, type FlathubMetadataProviderConfig } from "./providers/FlathubMetadataProvider";
 import { FaRegFileLines } from "react-icons/fa6";
 import { RetroAchievementsMetadataProvider, type RetroAchievementsMetadataProviderCache, type RetroAchievementsMetadataProviderConfig } from "./providers/RetroAchievementsMetadataProvider";
 import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleDbMetadataProviderConfig } from "./providers/TitleDbMetadataProvider";
@@ -73,11 +74,19 @@ export interface MetadataConfig extends ModuleConfig<MetadataProviderConfigs>{
 	manual_overrides: Record<number, MetadataManualOverride>,
 	// Steam app matched by hand to a shortcut ("Find a Steam Match"), for Steam-backed features
 	// (community, news...). Independent from the metadata provider.
-	steam_matches: Record<number, number>
+	steam_matches: Record<number, number>,
+	// Software (apps, tools): Flathub and manual edits only, no game providers, compatibility or achievements.
+	// Set by hand, or detected for new Flatpak shortcuts from their Flathub categories
+	software_apps?: number[],
+	// Marked as games by hand: never detected as software
+	game_apps?: number[]
 }
 
 export interface MetadataCache extends ModuleCache<MetadataProviderCaches, MetadataData>{
-
+	// Software apps for which the software providers found nothing (checked once, until the cache is cleared)
+	software_without_source?: number[],
+	// New shortcuts already checked for software
+	software_checked?: number[]
 }
 
 export interface MetadataProviderConfigs{
@@ -86,6 +95,7 @@ export interface MetadataProviderConfigs{
 	rawg: RAWGMetadataProviderConfig;
 	gametdb: GameTDBMetadataProviderConfig;
 	lizardbyte: LizardByteGameDBMetadataProviderConfig;
+	flathub: FlathubMetadataProviderConfig;
 	ra: RetroAchievementsMetadataProviderConfig;
 	titledb: TitleDbMetadataProviderConfig;
 	dbox: DBoxMetadataProviderConfig;
@@ -97,6 +107,7 @@ export interface MetadataProviderCaches{
 	rawg: RAWGMetadataProviderCache;
 	gametdb: GameTDBMetadataProviderCache;
 	lizardbyte: LizardByteGameDBMetadataProviderCache;
+	flathub: FlathubMetadataProviderCache;
 	ra: RetroAchievementsMetadataProviderCache;
 	titledb: TitleDbMetadataProviderCache;
 	dbox: DBoxMetadataProviderCache;
@@ -116,8 +127,98 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 		new SteamMetadataProvider(this),
 		new LizardByteGameDBMetadataProvider(this),
 		new RAWGMetadataProvider(this),
-		new RetroAchievementsMetadataProvider(this)
+		new RetroAchievementsMetadataProvider(this),
+		// Software only, see fetchDataProviders
+		new FlathubMetadataProvider(this)
 	];
+
+	get softwareApps(): number[]
+	{
+		return this.config.software_apps ?? [];
+	}
+
+	isSoftware(appId: number): boolean
+	{
+		return this.softwareApps.includes(appId);
+	}
+
+	/** Marks an app as software or, by hand, as a game (then it's never detected as software) */
+	async setSoftware(appId: number, software: boolean): Promise<void>
+	{
+		const apps = this.softwareApps.filter((id) => id !== appId);
+		this.config.software_apps = software ? [...apps, appId] : apps;
+		const games = (this.config.game_apps ?? []).filter((id) => id !== appId);
+		this.config.game_apps = software ? games : [...games, appId];
+		await this.saveConfig();
+	}
+
+	private detectingSoftware: Record<number, Promise<void>> = {};
+
+	/**
+	 * New Flatpak shortcuts (no data yet, not a ROM, not classified by hand) are software unless Flathub
+	 * gives them a game genre. Checked once; on network errors it's tried again later.
+	 */
+	private detectSoftware(appId: number): Promise<void>
+	{
+		if (this.isSoftware(appId) || (this.config.game_apps ?? []).includes(appId) || this.hasCachedData(appId) ||
+			this.excludedApps.includes(appId) || (this.cache.software_checked ?? []).includes(appId))
+			return Promise.resolve();
+
+		return this.detectingSoftware[appId] ??= (async () => {
+			try{
+				const flathub = this.providers.find((provider): provider is FlathubMetadataProvider => provider instanceof FlathubMetadataProvider);
+				const details = flathub?.isValid ? await getAppDetails(appId) : undefined;
+				if (!details || appStore.GetAppOverviewByAppID(appId)?.app_type !== SteamAppTypeShortcut)
+					return;
+
+				const flatpakId = getFlatpakAppId(getLaunchCommand(details));
+				const kind = flatpakId ? await flathub!.classify(flatpakId) : undefined;
+				this.cache.software_checked = [...(this.cache.software_checked ?? []), appId];
+				void this.saveCache();
+				if (kind === "software"){
+					this.logger.log(`Detected as software from Flathub (${flatpakId})`, appId);
+					this.config.software_apps = [...this.softwareApps, appId];
+					await this.saveConfig();
+				}
+			}
+			catch (e: any){
+				this.logger.error("Software detection failed", appId, e);
+			}
+			finally{
+				delete this.detectingSoftware[appId];
+			}
+		})();
+	}
+
+	// Software apps with nothing to show (no Flathub entry found, no manual edits) are excluded:
+	// Steam's own page stays (and Decky Metadata, which takes MetaDeck's excluded apps, keeps them)
+	override get excludedApps(): number[]
+	{
+		const manual = this.config.manual_overrides ?? {};
+		const withoutSource = this.cache.software_without_source ?? [];
+		return super.excludedApps.concat(this.softwareApps.filter((id) => !manual[id] && withoutSource.includes(id)));
+	}
+
+	private setSoftwareWithoutSource(appId: number, withoutSource: boolean)
+	{
+		const apps = (this.cache.software_without_source ?? []).filter((id) => id !== appId);
+		if (withoutSource)
+			apps.push(appId);
+		if (apps.length !== (this.cache.software_without_source ?? []).length){
+			this.cache.software_without_source = apps;
+			void this.saveCache();
+		}
+	}
+
+	public override async fetchDataAsync(appId: number): Promise<MetadataData | undefined>
+	{
+		await this.detectSoftware(appId);
+		const data = await super.fetchDataAsync(appId);
+		// Remember software apps without an entry, so they're excluded without asking again
+		if (this.isSoftware(appId) && !this.excludedApps.includes(appId))
+			this.setSoftwareWithoutSource(appId, !this.hasCachedData(appId));
+		return data;
+	}
 
 	getManualOverride(appId: number): MetadataManualOverride | undefined
 	{
@@ -204,6 +305,8 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	override async removeCache(appId: number){
 		await super.removeCache(appId);
+		// Look for a software entry again
+		this.setSoftwareWithoutSource(appId, false);
 		
 		let appData = appDetailsStore.GetAppData(appId);
 		if (!appData)
@@ -1005,8 +1108,11 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 	}
 
 	protected override async fetchDataProviders(appId: number): Promise<[ProviderIdentifier<MetadataModule>, MetadataData] | undefined> {
+		// Software: the software providers only (Flathub); games: the others
+		const software = this.isSoftware(appId);
+		const providers = this.providers.filter((provider) => (provider instanceof FlathubMetadataProvider) === software);
 		let results: Partial<Record<ProviderIdentifier<MetadataModule>, MetadataData>> = {};
-		for (const provider of this.providers){
+		for (const provider of providers){
 			// isValid (not just enabled): a provider without its API key must be skipped, not throw.
 			// A failing provider must not stop the remaining ones.
 			let data: MetadataData | undefined;
@@ -1058,7 +1164,8 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 
 	override async provideDefault(appId: number): Promise<MetadataData | undefined>
 	{
-		if(this.excludedApps.includes(appId))
+		// Software without an entry is left to Steam (excluded), not shown with an empty default
+		if(this.excludedApps.includes(appId) || this.isSoftware(appId))
 			return undefined;
 
 		const details = await getAppDetails(appId);
