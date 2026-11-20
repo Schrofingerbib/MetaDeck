@@ -1,11 +1,26 @@
 {
-  "name": "MetaDeck",
-  "author": "Witherking25  'Kernel Panic'",
+  "name": "MetaDeck Plus",
+  "author": "Witherking25 'Kernel Panic', Schrofingerbib",
   "api_version": 1,
   "flags": [],
   "publish": {
-    "tags": ["EmuDeck", "IGDB", "LizardByte", "GOG", "Steam", "RAWG", "GameTDB", "Dolphin", "PCSX2", "RPCS3", "Xenia"],
-    "description": "Plugin for viewing metadata for Non-Steam games. Part of the EmuDeck Project.",
-    "image": "https://opengraph.githubassets.com/1/EmuDeck/MetaDeck"
+    "tags": [
+      "EmuDeck",
+      "IGDB",
+      "LizardByte",
+      "GOG",
+      "Steam",
+      "RAWG",
+      "GameTDB",
+      "Dolphin",
+      "PCSX2",
+      "RPCS3",
+      "Xenia",
+      "Flathub",
+      "IGN",
+      "Trailers"
+    ],
+    "description": "MetaDeck with more: a \"Change Metadata\" editor (search, Steam Match, compatibility, achievements), software apps from Flathub, and Decky Metadata's Steam Match features (Community, Activity, controller layouts, trailers). Fork of MetaDeck, part of the EmuDeck Project.",
+    "image": "https://opengraph.githubassets.com/1/Schrofingerbib/MetaDeck"
   }
 }
