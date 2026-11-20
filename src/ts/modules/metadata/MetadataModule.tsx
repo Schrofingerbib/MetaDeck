@@ -44,6 +44,7 @@ import { FaRegFileLines } from "react-icons/fa6";
 import { RetroAchievementsMetadataProvider, type RetroAchievementsMetadataProviderCache, type RetroAchievementsMetadataProviderConfig } from "./providers/RetroAchievementsMetadataProvider";
 import { TitleDbMetadataProvider, type TitleDbMetadataProviderCache, type TitleDbMetadataProviderConfig } from "./providers/TitleDbMetadataProvider";
 import type { ProviderIdentifier } from "../Provider";
+import { isSteamStoreGone } from "./SteamMatch";
 import { DBoxMetadataProvider, type DBoxMetadataProviderCache, type DBoxMetadataProviderConfig } from "./providers/DBoxMetadataProvider";
 
 /** Whether the library page of this app is shown: /library/app/:appid, /library/details/:appid, /library/:collection/app/:appid */
@@ -213,11 +214,38 @@ export class MetadataModule extends Module<"metadata", MetadataProvider<any>>{
 	public override async fetchDataAsync(appId: number): Promise<MetadataData | undefined>
 	{
 		await this.detectSoftware(appId);
-		const data = await super.fetchDataAsync(appId);
+		let data = await super.fetchDataAsync(appId);
+		if (!this.hasCachedData(appId) && await this.steamSourceGone(appId))
+			data = await this.fetchWithoutSteamSource(appId);
 		// Remember software apps without an entry, so they're excluded without asking again
 		if (this.isSoftware(appId) && !this.excludedApps.includes(appId))
 			this.setSoftwareWithoutSource(appId, !this.hasCachedData(appId));
 		return data;
+	}
+
+	/** Steam is this app's chosen source, but its store page is gone (delisted) */
+	private async steamSourceGone(appId: number): Promise<boolean>
+	{
+		if (this.providerOverrides[appId] !== "steam" || this.excludedApps.includes(appId))
+			return false;
+		const steam = this.providers.find((provider): provider is SteamMetadataProvider => provider instanceof SteamMetadataProvider);
+		const steamAppId = Number(steam?.overrides[appId] ?? this.getSteamMatch(appId));
+		return steamAppId > 0 && await isSteamStoreGone(steamAppId);
+	}
+
+	/** Data from the automatic providers, as if Steam weren't the chosen source (it has none to give) */
+	private async fetchWithoutSteamSource(appId: number): Promise<MetadataData | undefined>
+	{
+		const found = await this.fetchDataProviders(appId);
+		if (!found)
+			return undefined;
+		this.logger.log(`The Steam store page chosen as the source of ${appId} is gone: ${found[0]} answers instead`);
+		await this.provideAdditional(appId, found[1]);
+		this.cacheData(appId, found[1]);
+		this.dataProviders[appId] = found[0] as any;
+		await this.saveCache();
+		await this.apply(appId); // Applied before, with nothing
+		return this.getCachedData(appId) ?? undefined;
 	}
 
 	getManualOverride(appId: number): MetadataManualOverride | undefined

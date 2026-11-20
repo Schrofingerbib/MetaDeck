@@ -22,7 +22,7 @@ import type { MetadataManualOverride, MetadataModule } from "./MetadataModule";
 import type { FuzzySearchMetadataProvider } from "./providers/FuzzySearchMetadataProvider";
 import type { LizardByteGameDBMetadataProvider } from "./providers/LizardByteGameDBMetadataProvider";
 import { fetchIgn, searchIgn } from "./IgnSearch";
-import { getSteamMatchPreview, parseSteamAppId, searchSteamStore, type SteamMatchCandidate, type SteamMatchPreview } from "./SteamMatch";
+import { getSteamCommunityName, getSteamMatchPreview, isSteamStoreGone, parseSteamAppId, searchSteamStore, type SteamMatchCandidate, type SteamMatchPreview } from "./SteamMatch";
 import type { SteamMetadataProvider } from "./providers/SteamMetadataProvider";
 import type { FuzzySearchCompatdataProvider } from "../compatdata/providers/FuzzySearchCompatdataProvider";
 import type { RetroAchievementsAchievementsProvider, RetroAchievementsConsole, RetroAchievementsGame } from "../achievements/providers/RetroAchievementsAchievementsProvider";
@@ -330,8 +330,10 @@ export const MetadataEditor: FC = () => {
 			if (steamChanged){
 				await module.setSteamMatch(appId, steamAppId);
 				// The Steam match becomes the source of the game's metadata (manual edits stay on top);
-				// removing it goes back to the automatic provider if Steam was the source
-				await switchSource(steamAppId ? "steam" : undefined, steamAppId, "steam");
+				// removing it goes back to the automatic provider if Steam was the source, and so does a match
+				// no longer on the store (delisted): it has no metadata to give, only its community and layouts
+				const listed = !!steamAppId && !await isSteamStoreGone(steamAppId);
+				await switchSource(listed ? "steam" : undefined, steamAppId, "steam");
 			}
 			const compatChanged = changes.includes("steamCompat");
 			if (compatChanged){
@@ -550,6 +552,31 @@ export const MetadataEditor: FC = () => {
 	const [steamQuery, setSteamQuery] = useState(name);
 	const [steamCandidates, setSteamCandidates] = useState<SteamMatchCandidate[] | undefined>(undefined);
 	const [steamSelected, setSteamSelected] = useState<{ candidate: SteamMatchCandidate; preview?: SteamMatchPreview } | undefined>(undefined);
+
+	// What the store has for the Steam App ID being edited: a delisted app is still a match (community, layouts)
+	const [steamStatus, setSteamStatus] = useState<{ appid: number; title?: string; gone: boolean } | undefined>(undefined);
+	useEffect(() => {
+		const appid = parseSteamAppId(draft.steamAppId);
+		setSteamStatus(undefined);
+		if (!appid)
+			return;
+		let current = true;
+		const timer = setTimeout(async () => {
+			try{
+				const gone = await isSteamStoreGone(appid);
+				const title = gone ? await getSteamCommunityName(appid) : (await getSteamMatchPreview(appid))?.title;
+				if (current)
+					setSteamStatus({ appid, title, gone });
+			}
+			catch (e: any){
+				module.logger.debug("Steam app status failed", e);
+			}
+		}, 500);
+		return () => {
+			current = false;
+			clearTimeout(timer);
+		};
+	}, [draft.steamAppId]);
 
 	const searchSteam = async () => {
 		setBusy(true);
@@ -854,6 +881,13 @@ export const MetadataEditor: FC = () => {
 								{field("editorSteamAppId", false,
 									<TextField value={draft.steamAppId} description={t("editorSteamAppIdDesc")} onChange={(e) => update({ steamAppId: e.target.value })}/>)}
 							</PanelSectionRow>
+							{steamStatus &&
+								<PanelSectionRow>
+									<div style={steamStatus.gone ? { ...compactTextStyle, color: "#f59e0b" } : compactTextStyle}>
+										{!steamStatus.gone ? t("editorSteamOnStore").replace("{title}", steamStatus.title ?? String(steamStatus.appid)) :
+											steamStatus.title ? t("editorSteamDelisted").replace("{title}", steamStatus.title) : t("editorSteamNoApp")}
+									</div>
+								</PanelSectionRow>}
 						</PanelSection>
 						</>}
 
