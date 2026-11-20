@@ -66,13 +66,47 @@ export class CompatdataModule extends Module<"compatdata", CompatdataProvider<an
 	providers: CompatdataProvider<any>[] = [
 		// First: a Steam match replaces the emulator compatibility (unless the app is excluded from it)
 		new SteamMatchCompatdataProvider(this),
+		// Then the EmuDeck list (Steam Deck reports) for the game's own title, see fetchDataProviders
+		new EmuDeckCompatdataProvider(this),
+		// The emulators' lists: matched by exact IDs, but rated on PC
 		new PCSX2CompatdataProvider(this),
 		new RPCS3CompatdataProvider(this),
 		new XeniaCompatdataProvider(this),
 		new DolphinCompatdataProvider(this),
-		new CemuCompatdataProvider(this),
-		new EmuDeckCompatdataProvider(this)
+		new CemuCompatdataProvider(this)
 	];
+
+	/**
+	 * The EmuDeck list answers first only with the game's own title; its merely close titles
+	 * come last, after the emulators' lists, as before.
+	 */
+	protected override async fetchDataProviders(appId: number): ReturnType<Module<"compatdata", CompatdataProvider<any>>["fetchDataProviders"]>{
+		const emudeck = this.providers.find((provider): provider is EmuDeckCompatdataProvider => provider instanceof EmuDeckCompatdataProvider);
+		if (!emudeck)
+			return super.fetchDataProviders(appId);
+
+		emudeck.sameTitleOnly.add(appId);
+		try{
+			const found = await super.fetchDataProviders(appId);
+			if (found)
+				return found;
+		}
+		finally{
+			emudeck.sameTitleOnly.delete(appId);
+		}
+
+		try{
+			if (emudeck.isValid && !emudeck.excludedAppsSelf.includes(appId) && await emudeck.test(appId)){
+				const data = await emudeck.provide(appId);
+				if (data && !this.isEmpty(data))
+					return [emudeck.identifier, data];
+			}
+		}
+		catch (e: any){
+			this.logger.error(`Provider ${emudeck.identifier} failed for ${appId}`, e);
+		}
+		return undefined;
+	}
 
 	dependencies = [
 		"metadata" as const

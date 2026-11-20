@@ -17,7 +17,7 @@ import { useMetaDeckState } from "../../MetaDeckState";
 import { t } from "../../useTranslations";
 import { toasterToast } from "../../util";
 import { getGamepadTextArea } from "../../gamepadTextArea";
-import { SteamAppTypeShortcut, StoreCategory, type ID, type MetadataData } from "../../Interfaces";
+import { SteamAppTypeShortcut, SteamDeckCompatCategory, SteamTestResult, StoreCategory, type CompatdataData, type ID, type MetadataData } from "../../Interfaces";
 import type { MetadataManualOverride, MetadataModule } from "./MetadataModule";
 import type { FuzzySearchMetadataProvider } from "./providers/FuzzySearchMetadataProvider";
 import type { LizardByteGameDBMetadataProvider } from "./providers/LizardByteGameDBMetadataProvider";
@@ -25,6 +25,7 @@ import { fetchIgn, searchIgn } from "./IgnSearch";
 import { getSteamMatchPreview, parseSteamAppId, searchSteamStore, type SteamMatchCandidate, type SteamMatchPreview } from "./SteamMatch";
 import { getDeckyMetadataSteamMatch, setDeckyMetadataSteamMatch } from "./DeckyMetadataBridge";
 import type { SteamMetadataProvider } from "./providers/SteamMetadataProvider";
+import type { FuzzySearchCompatdataProvider } from "../compatdata/providers/FuzzySearchCompatdataProvider";
 import {
 	actionBarStyle, actionButtonStyle, categoryGridStyle, compactTextStyle, editedFieldStyle, editedLabelStyle,
 	editedTagStyle, editorFocusTargetClassName, editorRootClassName, fieldStyle, labelStyle, pageStyle,
@@ -72,7 +73,24 @@ type Draft = {
 	categories: number[]; // Editable categories only
 	steamAppId: string; // Steam match: ID or URL, empty for none
 	steamCompat: boolean; // With a Steam match: its compatibility (Valve) instead of MetaDeck's
+	emudeckId: string; // EmuDeck list entry ("PS2 · Title"): empty for automatic, "0" for none
 };
+
+// Draft fields saved elsewhere than in the manual metadata edits
+const NOT_METADATA: (keyof Draft)[] = ["steamAppId", "steamCompat", "emudeckId"];
+
+const COMPAT_LABELS: Record<SteamDeckCompatCategory, Parameters<typeof t>[0]> = {
+	[SteamDeckCompatCategory.UNKNOWN]: "unknown",
+	[SteamDeckCompatCategory.UNSUPPORTED]: "unsupported",
+	[SteamDeckCompatCategory.PLAYABLE]: "playable",
+	[SteamDeckCompatCategory.VERIFIED]: "verified"
+};
+const compatLabel = (category?: SteamDeckCompatCategory) => t(COMPAT_LABELS[category ?? SteamDeckCompatCategory.UNKNOWN] ?? "unknown");
+const compatNotes = (entry: CompatdataData) =>
+	(entry.deck_test_results ?? []).filter((r) => r.test_result === SteamTestResult.Notes).map((r) => r.test_loc_token);
+/** "Gamecube · Dolphin · Verified" (the entry ID is the console and title) */
+const compatDetail = (entry: CompatdataData) =>
+	[entry.console, entry.emulator, compatLabel(entry.deck_compat_category)].filter((part) => part).join(" · ");
 
 const namesToText = (people?: { name: string }[]) => (people ?? []).map((p) => p.name).join(", ");
 const textToNames = (text: string) => text.split(",").map((name) => name.trim()).filter((name) => name.length);
@@ -96,7 +114,7 @@ const steamImageStyle = {
 	borderRadius: 4
 } as const;
 
-function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true): Draft {
+function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true, emudeckId = ""): Draft {
 	return {
 		description: data?.description ?? "",
 		developers: namesToText(data?.developers),
@@ -106,7 +124,8 @@ function draftFrom(data?: MetadataData, steamAppId?: number, steamCompat = true)
 		categories: (data?.store_categories ?? []).filter((c): c is StoreCategory =>
 			typeof c === "number" && EDITABLE_CATEGORY_IDS.has(c)),
 		steamAppId: steamAppId ? String(steamAppId) : "",
-		steamCompat
+		steamCompat,
+		emudeckId
 	};
 }
 
@@ -204,8 +223,17 @@ export const MetadataEditor: FC = () => {
 	// The Steam match compatibility provider: apps excluded from it keep MetaDeck's compatibility
 	const steamCompatProvider = () => state.modules.compatdata.providers.find((provider) => provider.identifier === "steam_match");
 	const usesSteamCompat = () => !(steamCompatProvider()?.excludedAppsSelf ?? []).includes(appId);
+	// The EmuDeck list provider and the entry pinned for this app
+	const compat = state.modules.compatdata;
+	const emudeckProvider = () => compat.providers.find((provider) => provider.identifier === "emudeck") as
+		unknown as FuzzySearchCompatdataProvider<"emudeck"> | undefined;
+	const emudeckPin = () => {
+		const id = emudeckProvider()?.overrides[appId];
+		return id === undefined ? "" : String(id);
+	};
+	const currentDraft = () => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat(), emudeckPin());
 
-	const [saved, setSaved] = useState<Draft>(() => draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat()));
+	const [saved, setSaved] = useState<Draft>(currentDraft);
 	const [draft, setDraft] = useState<Draft>(saved);
 
 	// Without a MetaDeck Steam match yet, start from the one Decky Metadata has (it drives its community, news...)
@@ -229,7 +257,7 @@ export const MetadataEditor: FC = () => {
 
 	const update = (changes: Partial<Draft>) => setDraft((current) => ({ ...current, ...changes }));
 	const reload = () => {
-		const current = draftFrom(module.fetchData(appId), module.getSteamMatch(appId), usesSteamCompat());
+		const current = currentDraft();
 		setSaved(current);
 		setDraft(current);
 		setManual(module.getManualOverride(appId));
@@ -251,7 +279,7 @@ export const MetadataEditor: FC = () => {
 		}
 		setSaving(true);
 		try{
-			if (changes.some((change) => change !== "steamAppId"))
+			if (changes.some((change) => !NOT_METADATA.includes(change)))
 				await module.setManualOverride(appId, override);
 			if (steamChanged){
 				await module.setSteamMatch(appId, steamAppId);
@@ -270,9 +298,22 @@ export const MetadataEditor: FC = () => {
 					provider.excludedAppsSelf = draft.steamCompat ? excluded : [...excluded, appId];
 				}
 			}
-			// The compatibility depends on the Steam match and on this choice
-			if (steamChanged || compatChanged){
-				const compat = state.modules.compatdata;
+			const emudeckChanged = changes.includes("emudeckId");
+			if (emudeckChanged)
+				await emudeckProvider()?.setOverride(appId,
+				draft.emudeckId === "" ? undefined : draft.emudeckId === "0" ? 0 : draft.emudeckId);
+			// The compatibility depends on the Steam match and on these choices
+			if (steamChanged || compatChanged || emudeckChanged){
+				// A chosen EmuDeck entry answers for this game (before the emulator providers),
+				// unless the Steam match's compatibility is used
+				const pinned = draft.emudeckId !== "" && draft.emudeckId !== "0";
+				const steamWins = draft.steamCompat && !!module.getSteamMatch(appId);
+				const overrides: Record<number, string> = { ...compat.providerOverrides };
+				if (pinned && !steamWins)
+					overrides[appId] = "emudeck";
+				else if (overrides[appId] === "emudeck")
+					delete overrides[appId];
+				compat.providerOverrides = overrides as typeof compat.providerOverrides;
 				// As the exclusion settings do: also forget the provider that answered last time,
 				// otherwise it is asked first again and the Steam match provider is never reached
 				await compat.onExcludedChange([], [appId]);
@@ -512,6 +553,43 @@ export const MetadataEditor: FC = () => {
 		String(steamAppId) === draft.steamAppId.trim() && draft.steamAppId.trim() !== saved.steamAppId.trim() ? t("editorSteamSelected") : undefined
 	].filter((part) => part).join(" · ");
 
+	// Compatibility: the EmuDeck list
+	const [emuQuery, setEmuQuery] = useState(name);
+	const [emuResults, setEmuResults] = useState<CompatdataData[] | undefined>(undefined);
+	const [emuSelected, setEmuSelected] = useState<ID | undefined>(undefined);
+
+	const searchEmuDeck = async () => {
+		setBusy(true);
+		setEmuSelected(undefined);
+		try{
+			setEmuResults(await emudeckProvider()?.searchByQuery(emuQuery) ?? []);
+		}
+		catch (e: any){
+			module.logger.error("EmuDeck search failed", e);
+			toasterToast(t("editorSearchFailed"), module);
+			setEmuResults([]);
+		}
+		finally{
+			setBusy(false);
+		}
+	};
+
+	const emudeckEntryLabel = (id: string) => {
+		if (id === "")
+			return t("editorEmuDeckAutomatic");
+		if (id === "0")
+			return t("editorEmuDeckNone");
+		const entry = emudeckProvider()?.getEntryById(id);
+		return entry ? `${entry.title} · ${compatDetail(entry)}` : id;
+	};
+
+	const compatData = compat.fetchData(appId);
+	const compatSource = compat.providers.find((provider) => provider.identifier === compat.dataProviders[appId]);
+	const compatCurrent = compatData && compatSource ?
+		[compatSource.title, compatData.title + (compatData.console ? ` (${compatData.console})` : ""), compatLabel(compatData.deck_compat_category)].join(" · ") :
+		t("editorCompatNone");
+	const hasSteamMatch = !!draft.steamAppId.trim();
+
 	// A field of the Source section, marked when it has manual edits
 	const field = (key: Parameters<typeof t>[0], edited: boolean, children: ReactNode) =>
 		<div style={edited ? { ...fieldStyle, ...editedFieldStyle } : fieldStyle}>
@@ -619,14 +697,6 @@ export const MetadataEditor: FC = () => {
 								{field("editorSteamAppId", false,
 									<TextField value={draft.steamAppId} description={t("editorSteamAppIdDesc")} onChange={(e) => update({ steamAppId: e.target.value })}/>)}
 							</PanelSectionRow>
-							<PanelSectionRow>
-								<ToggleField
-									label={t("editorSteamCompat")}
-									description={t("editorSteamCompatDesc")}
-									checked={draft.steamCompat}
-									disabled={!draft.steamAppId.trim()}
-									onChange={(checked) => update({ steamCompat: checked })}/>
-							</PanelSectionRow>
 						</PanelSection>
 
 						<PanelSection title={t("editorSearchSection")}>
@@ -730,6 +800,88 @@ export const MetadataEditor: FC = () => {
 									)}
 								</div>
 							</PanelSectionRow>
+						</PanelSection>
+
+						<PanelSection title={t("editorCompatSection")}>
+							<PanelSectionRow>
+								<div style={compactTextStyle}>{`${t("editorCompatCurrent")}: ${compatCurrent}`}</div>
+							</PanelSectionRow>
+							<PanelSectionRow>
+								<ToggleField
+									label={t("editorSteamCompat")}
+									description={t("editorSteamCompatDesc")}
+									checked={draft.steamCompat}
+									disabled={!hasSteamMatch}
+									onChange={(checked) => update({ steamCompat: checked })}/>
+							</PanelSectionRow>
+							{emudeckProvider()?.isValid &&
+								<>
+									<PanelSectionRow>
+										<div style={compactTextStyle}>{t("editorEmuDeckHelp")}</div>
+									</PanelSectionRow>
+									<PanelSectionRow>
+										<div style={searchRowStyle}>
+											<TextField value={emuQuery} onChange={(e) => setEmuQuery(e.target.value)}/>
+											<DialogButton style={searchButtonStyle} onClick={searchEmuDeck} disabled={busy || !emuQuery.trim()}>
+												{busy ? t("editorSearching") : t("editorEmuDeckSearch")}
+											</DialogButton>
+										</div>
+									</PanelSectionRow>
+									{emuResults && !emuResults.length &&
+										<PanelSectionRow>
+											<div style={compactTextStyle}>{t("editorEmuDeckNoResults")}</div>
+										</PanelSectionRow>}
+									{emuResults?.map((entry) =>
+										<PanelSectionRow key={entry.id}>
+											<DialogButton
+												className={`${editorFocusTargetClassName} metadeck-editor__result`}
+												style={resultButtonStyle}
+												onClick={() => setEmuSelected(emuSelected === entry.id ? undefined : entry.id)}
+												disabled={busy}>
+												<span>{entry.title}</span>
+												<span style={resultDetailStyle}>
+													{[compatDetail(entry),
+														String(entry.id) === saved.emudeckId ? t("editorSteamCurrent") : undefined,
+														String(entry.id) === draft.emudeckId && draft.emudeckId !== saved.emudeckId ? t("editorSteamSelected") : undefined]
+														.filter((part) => part).join(" · ")}
+												</span>
+											</DialogButton>
+											{emuSelected === entry.id &&
+												<div style={{ ...previewStyle, marginTop: 8 }}>
+													<div style={{ fontWeight: 700 }}>{entry.title}</div>
+													<div style={resultDetailStyle}>{compatDetail(entry)}</div>
+													{compatNotes(entry).map((note, i) => <div key={i} style={compactTextStyle}>{note}</div>)}
+													<div style={previewActionsStyle}>
+														<DialogButton
+															onClick={() => {
+																// Choosing an EmuDeck entry means using it rather than Valve's rating
+																update({ emudeckId: String(entry.id), steamCompat: hasSteamMatch ? false : draft.steamCompat });
+																toasterToast(t("editorEmuDeckSet"), module);
+															}}
+															disabled={busy}>
+															{t("editorEmuDeckUse")}
+														</DialogButton>
+													</div>
+												</div>}
+										</PanelSectionRow>
+									)}
+									<PanelSectionRow>
+										{field("editorEmuDeckEntry", draft.emudeckId !== "",
+											<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+												<div style={compactTextStyle}>{emudeckEntryLabel(draft.emudeckId)}</div>
+												{hasSteamMatch && draft.steamCompat && draft.emudeckId !== "" && draft.emudeckId !== "0" &&
+													<div style={{ ...compactTextStyle, color: "#f59e0b" }}>{t("editorEmuDeckSteamWins")}</div>}
+												<div style={previewActionsStyle}>
+													<DialogButton onClick={() => update({ emudeckId: "" })} disabled={busy || draft.emudeckId === ""}>
+														{t("editorEmuDeckUseAutomatic")}
+													</DialogButton>
+													<DialogButton onClick={() => update({ emudeckId: "0" })} disabled={busy || draft.emudeckId === "0"}>
+														{t("editorEmuDeckUseNone")}
+													</DialogButton>
+												</div>
+											</div>)}
+									</PanelSectionRow>
+								</>}
 						</PanelSection>
 					</>}
 			</Focusable>

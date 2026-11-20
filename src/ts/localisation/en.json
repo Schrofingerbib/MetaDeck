@@ -306,5 +306,19 @@
 	"editorInvalidSteamAppId": "Invalid Steam App ID",
 	"providerCompatdataSteamMatch": "Steam Match",
 	"editorSteamCompat": "Use the Steam Match's Compatibility",
-	"editorSteamCompatDesc": "Valve's Steam Deck rating and test results of the matched Steam game. Turn off to keep MetaDeck's compatibility (emulator lists, EmuDeck...) for this game"
+	"editorSteamCompatDesc": "Valve's Steam Deck rating and test results of the matched Steam game. Turn off to keep MetaDeck's compatibility (emulator lists, EmuDeck...) for this game",
+	"editorCompatSection": "Compatibility",
+	"editorCompatCurrent": "Current",
+	"editorCompatNone": "No compatibility information",
+	"editorEmuDeckHelp": "Search the EmuDeck community list when the automatic match is missing, or is another game or console. The chosen entry is used for this game",
+	"editorEmuDeckSearch": "Search EmuDeck",
+	"editorEmuDeckNoResults": "No EmuDeck reports found, try another name",
+	"editorEmuDeckEntry": "EmuDeck Entry",
+	"editorEmuDeckAutomatic": "Automatic (closest title for the game's console)",
+	"editorEmuDeckNone": "None: no EmuDeck compatibility for this game",
+	"editorEmuDeckUseAutomatic": "Automatic",
+	"editorEmuDeckUseNone": "No Entry",
+	"editorEmuDeckUse": "Use This Entry",
+	"editorEmuDeckSet": "EmuDeck entry selected, press Save to apply it",
+	"editorEmuDeckSteamWins": "While \"Use the Steam Match's Compatibility\" is on, Valve's rating is shown instead"
 }

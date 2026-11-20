@@ -1,9 +1,9 @@
-import {CompatdataData, SteamDeckCompatCategory, SteamTestResult, VerifiedDBResults, YesNo} from "../../../Interfaces";
+import {CompatdataData, SteamDeckCompatCategory, SteamTestResult, VerifiedDBResults, YesNo, type ID} from "../../../Interfaces";
 import {distanceWithLimit, getAppDetails, toasterToast} from "../../../util";
 import {fetchNoCors} from "@decky/api";
 import {t} from "../../../useTranslations";
 import {
-	getLaunchCommand, isCemuGame, isDolphinGame, isDuckstationGame, isEmulatedGame, isFlycastGame,
+	getFrontEndSystem, getLaunchCommand, isCemuGame, isDolphinGame, isDuckstationGame, isEmulatedGame, isFlycastGame,
 	isMelonDSGame, isMGBAGame, isPCSX2Game, isPPSSPPGame, isRosaliesMupenGUIGame, isRPCS3Game,
 	isShadPS4Game, isRyujinxGame, isVita3KGame, isXemuGame, isXeniaGame
 } from "../../../shortcuts";
@@ -11,6 +11,35 @@ import { FuzzySearchCompatdataProvider, type FuzzySearchCompatdataProviderCache,
 import Logger from "../../../logger";
 import { FaGamepad } from "react-icons/fa";
 import { distance } from "fastest-levenshtein";
+import { rankTitles, sameNumbers, sameTitle } from "../../../titleSearch";
+
+// RetroDECK / ES-DE system folders -> EmuDeck list consoles
+const SYSTEM_CONSOLES: Record<string, string[]> = {
+	psx: ['PS1', 'PSX'], ps2: ['PS2'], ps3: ['PS3'], ps4: ['PS4'], psp: ['PSP'], psvita: ['PS Vita', 'PSVITA'],
+	n64: ['N64'], n64dd: ['N64'], gc: ['Gamecube'], wii: ['Wii'], wiiu: ['Wii U'], switch: ['Switch'],
+	nds: ['DS'], n3ds: ['3DS'], gb: ['Gameboy'], gbc: ['Gameboy Color'], gba: ['Gameboy Advance'],
+	nes: ['NES'], famicom: ['NES'], snes: ['SNES'], sfc: ['SNES'],
+	dreamcast: ['Dreamcast'], saturn: ['Sega Saturn'], saturnjp: ['Sega Saturn'],
+	genesis: ['Genesis/Megadrive'], megadrive: ['Genesis/Megadrive'], megadrivejp: ['Genesis/Megadrive'],
+	segacd: ['Sega CD'], megacd: ['Sega CD'], megacdjp: ['Sega CD'], mastersystem: ['Sega Master System'], mark3: ['Sega Master System'],
+	xbox: ['Xbox'], xbox360: ['Xbox 360'],
+	tg16: ['TurboGrafx-16'], pcengine: ['TurboGrafx-16'], tg_cd: ['TurboGrafx-16'], pcenginecd: ['TurboGrafx-16'],
+	ngp: ['Neo Geo Pocket/Color'], ngpc: ['Neo Geo Pocket/Color'], c64: ['Commodore 64'], cdimono1: ['Phillips CD-i'],
+	'3do': ['3DO'], atarijaguar: ['Atari Jaguar'], dos: ['DOS'], doom: ['DOOM'], scummvm: ['ScummVM'], mame: ['MAME'], arcade: ['MAME']
+};
+
+/** Consoles of a game launched by a front-end (RetroDECK "-s ps2", or an ES-DE ".../roms/ps2/..." path) */
+function frontEndConsoleNames(launchCommand?: string): string[] | undefined{
+	const system = getFrontEndSystem(launchCommand);
+	return system ? SYSTEM_CONSOLES[system] : undefined;
+}
+
+/**
+ * Entry ID: console and title ("PS2 · Resident Evil Code: Veronica X"). Row numbers were used before,
+ * but they shift when rows are removed or reordered in the sheet, and pinned entries would then show
+ * another game's reports.
+ */
+const entryKey = (row: VerifiedDBResults) => `${row.Console?.trim()} · ${row.Game}`;
 
 export interface EmuDeckCompatdataProviderConfig extends FuzzySearchCompatdataProviderConfig{
 
@@ -26,7 +55,26 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 
 	logger = new Logger(this.identifier);
 
-	private verifiedDB: Record<string, VerifiedDBResults> = {};
+	/**
+	 * Apps whose automatic match must be the game's own title: the list comes before the emulators' lists
+	 * (Steam Deck reports rather than PC ratings), but these match by exact IDs, so a merely close title
+	 * ("Silent Hill 3" for "Silent Hill 2") waits until they have answered. See CompatdataModule.
+	 */
+	readonly sameTitleOnly = new Set<number>();
+
+	protected override async acceptAutomaticMatch(appId: number, game: CompatdataData): Promise<boolean>{
+		const details = await getAppDetails(appId);
+		if (!details)
+			return false;
+		if (this.sameTitleOnly.has(appId))
+			return sameTitle(details.strDisplayName, game.title);
+		// A close title with other numbers is another game of the series ("Resident Evil 3" for "Resident Evil")
+		return sameNumbers(details.strDisplayName, game.title);
+	}
+
+	// Every Steam Deck report (several per game: consoles, emulators, users) and the titles to search
+	private verifiedRows: VerifiedDBResults[] = [];
+	private verifiedTitles: string[] = [];
 
 	override async mount(): Promise<void>{
 		const response = (await fetchNoCors("https://opensheet.elk.sh/1fRqvAh_wW8Ho_8i966CCSBgPJ2R_SuDFIvvKsQCv05w/Database"));
@@ -37,13 +85,24 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 		}
 
 		const verifiedDB: VerifiedDBResults[] = await response.json();
-		this.verifiedDB = verifiedDB
+		// Previously keyed by title: reports of the same game for other consoles overwrote each other
+		this.verifiedRows = verifiedDB
 			.filter(r => !r.Platform || r.Platform.trim() === "Steam Deck")
-			.reduce<Record<string, VerifiedDBResults>>((acc, curr, i) => {
-				acc[curr.Game] = curr;
-				acc[curr.Game].Row = i;
-				return acc;
-			}, {});
+			.map((r, i) => ({ ...r, Row: i }));
+		this.verifiedTitles = [...new Set(this.verifiedRows.map(r => r.Game))];
+
+		// Pinned row numbers (MetaDeck 4.2.0 and earlier) become entry keys, while they still point to their rows
+		const overrides = { ...this.overrides };
+		let migrated = false;
+		for (const [appId, id] of Object.entries(overrides)){
+			const row = typeof id === "number" && id > 0 ? this.verifiedRows[id] : undefined; // 0: no entry
+			if (row){
+				overrides[appId as unknown as number] = entryKey(row);
+				migrated = true;
+			}
+		}
+		if (migrated)
+			this.overrides = overrides;
 	}
 
 	private async getConsoleNames(appId: number): Promise<string[] | undefined>{
@@ -87,7 +146,8 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 			return ['Dreamcast'];
 		
 		else
-			return undefined; // Unknown (match all)
+			// Emulators launched by a front-end such as RetroDECK; undefined: unknown (match all)
+			return frontEndConsoleNames(launchCommand);
 	}
 
 	override async test(appId: number): Promise<boolean>{
@@ -103,65 +163,92 @@ export class EmuDeckCompatdataProvider extends FuzzySearchCompatdataProvider<"em
 		return await super.test(appId);
 	}
 
-	protected async search(title: string, consoleNames?: string[]): Promise<CompatdataData[]>{
+	protected search(title: string, consoleNames?: string[]): Promise<CompatdataData[]>{
+		return Promise.resolve(this.searchReports(title, consoleNames, 5));
+	}
+
+	/** Search of the whole list (any console) by words, for the "Change Metadata" page */
+	override searchByQuery(query: string): Promise<CompatdataData[]>{
+		const order = new Map(rankTitles(query, this.verifiedTitles, (title) => title).map((title, i) => [title, i]));
+		const groups: Record<string, VerifiedDBResults[]> = {};
+		for (const row of this.verifiedRows)
+			if (order.has(row.Game))
+				(groups[`${row.Game}\u0000${row.Console}`] ??= []).push(row);
+
+		return Promise.resolve(Object.values(groups)
+			.sort((a, b) => order.get(a[0].Game)! - order.get(b[0].Game)! || a[0].Console.localeCompare(b[0].Console))
+			.slice(0, 30)
+			.map(reports => this.toEntry(reports)));
+	}
+
+	private searchReports(title: string, consoleNames: string[] | undefined, limit: number): CompatdataData[]{
 		// Search with double the fuzziness to retrieve them all, they will be filtered later
-		const closest_names = distanceWithLimit(this.fuzziness * 2, title, Object.keys(this.verifiedDB));
-		let results = closest_names.map(n => this.verifiedDB[n]);
+		const closestNames = new Set(distanceWithLimit(this.fuzziness * 2, title, this.verifiedTitles));
+		let results = this.verifiedRows.filter(r => closestNames.has(r.Game));
 
 		// If we have console(s), filter by them
 		if(consoleNames?.length)
-			results = results.filter(r => consoleNames.includes(r.Console));
+			results = results.filter(r => consoleNames.includes(r.Console?.trim()));
 
-		// Take max 5 results sorted by distance
+		// One entry per game and console, closest titles first
 		title = title.toLowerCase(); // Lowercase for efficiency
-		results = results
-			.sort((a, b) => distance(title, a.Game.toLowerCase()) - distance(title, b.Game.toLowerCase()))
-			.slice(0, 5);
+		const groups: Record<string, VerifiedDBResults[]> = {};
+		for(let result of results)
+			(groups[`${result.Game}\u0000${result.Console}`] ??= []).push(result);
 
-		// Group by name
-		let dict: Record<string, VerifiedDBResults[]> = {};
-		for(let result of results){
-			if(!dict[result.Game])
-				dict[result.Game] = [];
-			dict[result.Game].push(result);
-		}
+		return Object.values(groups)
+			.sort((a, b) => distance(title, a[0].Game.toLowerCase()) - distance(title, b[0].Game.toLowerCase()))
+			.slice(0, limit)
+			.map(reports => this.toEntry(reports));
+	}
 
-		return Object.entries(dict).map(([name, res]) => {
-			let compat = Math.max(
-				SteamDeckCompatCategory.UNKNOWN,
-				...res.map(r => {
-					if (r.Boots == YesNo.YES && r.Playable == YesNo.YES)
-						return SteamDeckCompatCategory.VERIFIED;
-					else if (r.Boots == YesNo.YES && (r.Playable == YesNo.NO || r.Playable == YesNo.PARTIAL))
-						return SteamDeckCompatCategory.PLAYABLE;
-					else
-						return SteamDeckCompatCategory.UNSUPPORTED;
-				})
-			);
+	/** An entry from the reports of a game on a console */
+	private toEntry(reports: VerifiedDBResults[]): CompatdataData{
+		let compat = Math.max(
+			SteamDeckCompatCategory.UNKNOWN,
+			...reports.map(r => {
+				if (r.Boots == YesNo.YES && r.Playable == YesNo.YES)
+					return SteamDeckCompatCategory.VERIFIED;
+				else if (r.Boots == YesNo.YES && (r.Playable == YesNo.NO || r.Playable == YesNo.PARTIAL))
+					return SteamDeckCompatCategory.PLAYABLE;
+				else
+					return SteamDeckCompatCategory.UNSUPPORTED;
+			})
+		);
 
-			let notes: CompatdataData['deck_test_results'] = res.map(r => r.Notes)
-				.filter(n => n)
-				.map(n => ({
-					test_loc_token: n,
-					test_result: SteamTestResult.Notes
-				}));
+		let notes: CompatdataData['deck_test_results'] = reports.map(r => r.Notes)
+			.filter(n => n)
+			.map(n => ({
+				test_loc_token: n,
+				test_result: SteamTestResult.Notes
+			}));
 
-			let result: CompatdataData = {
-				title: name,
-				id: Math.min(...res.map(r => r.Row)),
+		return {
+			title: reports[0].Game,
+			id: entryKey(reports[0]),
+			// The sheet's column is "Emulator " (with a trailing space)
+			console: reports[0].Console?.trim(),
+			emulator: ((reports[0] as any)["Emulator "] ?? reports[0].Emulator)?.trim(),
 
-				deck_compat_category: compat,
-				frame_compat_category: compat, // We assume the Frame to be as powerful as the Deck
+			deck_compat_category: compat,
+			frame_compat_category: compat, // We assume the Frame to be as powerful as the Deck
 
-				// We need to duplicate the arrays since they might be edited later
-				deck_test_results: notes,
-				machine_test_results: [...notes],
-				os_test_results: [...notes],
-				frame_test_results: [...notes]
-			};
+			// We need to duplicate the arrays since they might be edited later
+			deck_test_results: notes,
+			machine_test_results: [...notes],
+			os_test_results: [...notes],
+			frame_test_results: [...notes]
+		};
+	}
 
-			return result;
-		});
+	// Pinned entries are looked up by ID (any title or console)
+	override getEntryById(id: ID): CompatdataData | undefined{
+		// Row numbers: pins not migrated yet
+		const row = typeof id === "number" || /^[0-9]+$/.test(id) ?
+			this.verifiedRows.find(r => r.Row === Number(id)) :
+			this.verifiedRows.find(r => entryKey(r) === id);
+		const key = row ? entryKey(row) : undefined;
+		return key ? this.toEntry(this.verifiedRows.filter(r => entryKey(r) === key)) : undefined;
 	}
 
 	protected override async enrichCompatdataForGame(appId: number, game: CompatdataData): Promise<void> {

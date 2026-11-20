@@ -2,7 +2,8 @@ import {CustomStoreCategory, StoreCategory} from "./Interfaces";
 import {call} from "@decky/api";
 import type { SteamAppDetails } from "./SteamTypes";
 
-export const romRegex = /(\/([^\/"])+)+(?!\.AppImage)(\.zip|\.7z|\.iso|\.bin|\.chd|\.cue|\.img|\.a26|\.lnx|\.ngp|\.ngc|\.3dsx|\.3ds|\.app|\.axf|\.cci|\.cxi|\.elf|\.n64|\.ndd|\.u1|\.v64|\.z64|\.nds|\.dmg|\.gbc|\.gba|\.gb|\.ciso|\.dol|\.gcm|\.gcz|\.nkit\.iso|\.rvz|\.wad|\.wia|\.wbfs|\.nes|\.fds|\.unif|\.unf|\.json|\.kp|\.nca|\.nro|\.nso|\.nsp|\.xci|\.rpx|\.wud|\.wux|\.wua|\.32x|\.cdi|\.gdi|\.m3u|\.gg|\.gen|\.md|\.smd|\.sms|\.ecm|\.mds|\.pbp|\.dump|\.gz|\.mdf|\.mrg|\.prx|\.bs|\.fig|\.sfc|\.smc|\.swx|\.pc2|\.wsc|\.ws)/i;
+// The extension must end the path: "com.quiverlauncher.app/apps/..." (native PC ports) is not a 3DS ".app" ROM
+export const romRegex = /(\/([^\/"])+)+(?!\.AppImage)(\.zip|\.7z|\.iso|\.bin|\.chd|\.cue|\.img|\.a26|\.lnx|\.ngp|\.ngc|\.3dsx|\.3ds|\.app|\.axf|\.cci|\.cxi|\.elf|\.n64|\.ndd|\.u1|\.v64|\.z64|\.nds|\.dmg|\.gbc|\.gba|\.gb|\.ciso|\.dol|\.gcm|\.gcz|\.nkit\.iso|\.rvz|\.wad|\.wia|\.wbfs|\.nes|\.fds|\.unif|\.unf|\.json|\.kp|\.nca|\.nro|\.nso|\.nsp|\.xci|\.rpx|\.wud|\.wux|\.wua|\.32x|\.cdi|\.gdi|\.m3u|\.gg|\.gen|\.md|\.smd|\.sms|\.ecm|\.mds|\.pbp|\.dump|\.gz|\.mdf|\.mrg|\.prx|\.bs|\.fig|\.sfc|\.smc|\.swx|\.pc2|\.wsc|\.ws)(?=["'\s]|$)/i;
 
 export const scriptRegex = /(\/([^\/"])+)+(\.sh)/;
 
@@ -148,6 +149,14 @@ export function isXeniaGame(launchCommand: string)
 export function isDuckstationGame(launchCommand: string)
 {
 	return isEmulatedGame(launchCommand) && launchCommand.includes("/duckstation.sh");
+}
+
+/** System of a game launched by a front-end: RetroDECK ("-s ps2") or an ES-DE ".../roms/ps2/..." path */
+export function getFrontEndSystem(launchCommand?: string): string | undefined
+{
+	const system = launchCommand?.match(/(?:^|\s)(?:-s|--system)\s+"?([A-Za-z0-9_-]+)/)?.[1] ??
+		launchCommand?.match(/\/roms\/([A-Za-z0-9_-]+)\//)?.[1];
+	return system?.toLowerCase().replace(/-/g, "_");
 }
 
 export function isPCSX2Game(launchCommand: string)

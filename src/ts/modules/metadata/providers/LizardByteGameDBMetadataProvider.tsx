@@ -7,6 +7,9 @@ import type { Company, Game, GameMode, InvolvedCompany, ExternalGame, ReleaseDat
 import { SteamMetadataProvider } from "./SteamMetadataProvider";
 import { SiIgdb } from "react-icons/si";
 import { distance } from "fastest-levenshtein";
+import { rankTitles, titleSearchPrefixes } from "../../../titleSearch";
+
+type BucketEntry = [string, { name: string; }];
 
 export interface LizardByteGameDBMetadataProviderConfig extends FuzzySearchMetadataProviderConfig{
 	
@@ -27,6 +30,7 @@ export class LizardByteGameDBMetadataProvider extends FuzzySearchMetadataProvide
 
 	// DEV: maybe cache buckets?
 	private _missingBucketsCache = new Set<string>();
+	private _keptBuckets = new Map<string, BucketEntry[]>();
 
 	// Search results only carry a name: year and platforms come from each game file (cached for the session)
 	private platformNames?: Promise<Record<string, string>>;
@@ -84,13 +88,12 @@ export class LizardByteGameDBMetadataProvider extends FuzzySearchMetadataProvide
 
 	override async mount(){
 		this._missingBucketsCache.clear();
+		this._keptBuckets.clear();
 	}
 
-	protected async search(title: string): Promise<MetadataData[]>{
-		if(!title?.length)
-			return [];
-
-		let result: [string, { name: string; }][] = [];
+	/** The titles of the buckets a title belongs to (by its first two letters), and of its localized buckets */
+	private async bucketEntries(title: string, keep = false): Promise<BucketEntry[]>{
+		const result: BucketEntry[] = [];
 
 		// Retrieve the first two letters to search for the title first, based on these rules:
 		// - 2 alphanumeric ascii chars: regular search <aa>.json
@@ -111,31 +114,71 @@ export class LizardByteGameDBMetadataProvider extends FuzzySearchMetadataProvide
 		}
 		else
 			bucket = "@";
-
-		let response: Response;
-
-		if(!this._missingBucketsCache.has(bucket)){
-			let response = await fetchNoCorsLegacyTimeout(`https://app.lizardbyte.dev/GameDB/buckets/${bucket}.json`);
-			if(response.ok)
-				result.push(...Object.entries(await response.json()) as any);
-			else
-				this._missingBucketsCache.add(bucket);
-		}
+		result.push(...await this.fetchBucket(bucket, keep));
 
 		// Try searching the localized buckets too
 		let strippedTitle = removeWhitespacesAndPuctuation(title).substring(0, 2).toLowerCase();
 		if(strippedTitle.length === 2){
 			const knownLocalizedBuckets = [ 'eu', 'ja-jp', 'ko-kr' ];
-			for(let locBucket of knownLocalizedBuckets){
-				if(!this._missingBucketsCache.has(`${locBucket}/${strippedTitle}`)){
-					response = await fetchNoCorsLegacyTimeout(`https://app.lizardbyte.dev/GameDB/buckets/localized/${locBucket}/${strippedTitle}.json`);
-					if(response.ok)
-						result.push(...Object.entries(await response.json()) as any);
-					else
-						this._missingBucketsCache.add(`${locBucket}/${strippedTitle}`);
-				}
-			}
+			for(let locBucket of knownLocalizedBuckets)
+				result.push(...await this.fetchBucket(`localized/${locBucket}/${strippedTitle}`, keep));
 		}
+
+		return result;
+	}
+
+	/** A bucket's titles; `keep` keeps the last few in memory (repeated searches on the "Change Metadata" page) */
+	private async fetchBucket(path: string, keep: boolean): Promise<BucketEntry[]>{
+		if(this._missingBucketsCache.has(path))
+			return [];
+		const kept = this._keptBuckets.get(path);
+		if(kept)
+			return kept;
+
+		const response = await fetchNoCorsLegacyTimeout(`https://app.lizardbyte.dev/GameDB/buckets/${path}.json`);
+		if(!response.ok){
+			this._missingBucketsCache.add(path);
+			return [];
+		}
+		const entries = Object.entries(await response.json()) as BucketEntry[];
+		if(keep){
+			this._keptBuckets.set(path, entries);
+			while(this._keptBuckets.size > 12)
+				this._keptBuckets.delete(this._keptBuckets.keys().next().value!);
+		}
+		return entries;
+	}
+
+	/**
+	 * Search by words for the "Change Metadata" page: abbreviations, words in any order, typos...
+	 * Also looks in the buckets of the expanded abbreviations and with a leading "The" ("gta", "zelda").
+	 */
+	override searchByQuery(query: string): Promise<MetadataData[]>{
+		return this.throttle(async () => {
+			const entries = new Map<string, string>();
+			for (const prefix of titleSearchPrefixes(query))
+				for (const [id, entry] of await this.bucketEntries(prefix, true))
+					entries.set(id, entry.name);
+
+			return rankTitles(query, [...entries], ([, name]) => name)
+				.slice(0, 20)
+				.map(([id, name]) => ({
+					id: id,
+					title: name,
+
+					// Will enrich later
+					description: '',
+
+					store_categories: []
+				}));
+		});
+	}
+
+	protected async search(title: string): Promise<MetadataData[]>{
+		if(!title?.length)
+			return [];
+
+		let result = await this.bucketEntries(title);
 
 		this.logger.debug(`Results for ${title}:`, result);
 

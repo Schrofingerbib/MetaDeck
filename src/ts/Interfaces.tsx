@@ -46,6 +46,10 @@ export interface CompatdataData extends EntryData{
 	machine_test_results?: SteamAppDetails['vecSteamMachineCompatTestResults'];
 	os_test_results?: SteamAppDetails['vecSteamOSCompatTestResults'];
 	frame_test_results?: SteamAppDetails['vecSteamFrameCompatTestResults'];
+
+	// Community lists (EmuDeck): what the report is about, to tell entries of the same title apart
+	console?: string;
+	emulator?: string;
 }
 
 export interface AchievementsData extends EntryData{
