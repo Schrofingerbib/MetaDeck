@@ -256,9 +256,9 @@ export class SteamMetadataProvider extends FuzzySearchMetadataProvider<"steam">{
 
 			rating: game.data.metacritic?.score,
 			release_date: undefined, // Cannot parse
-			developers: game.data.developers.map(d => ({name: d, url: ""})),
-			publishers: game.data.publishers.map(p => ({name: p, url: ""})),
-			store_categories: game.data.categories
+			developers: (game.data.developers ?? []).map(d => ({name: d, url: ""})),
+			publishers: (game.data.publishers ?? []).map(p => ({name: p, url: ""})),
+			store_categories: (game.data.categories ?? [])
 				.filter(c => StoreCategory[c.id])
 				.map(c => StoreCategory[StoreCategory[c.id] as any] as unknown as StoreCategory)
 		};
